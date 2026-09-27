@@ -226,6 +226,7 @@ export const DEFAULT_SETTINGS = {
   bloom: true,
   cameraShake: 1.0,         // 0..1
   showFps: false,
+  fullscreen: true,         // matches go fullscreen with Esc captured (main.js _enterFullscreen)
   master: 0.8, music: 0.6, sfx: 0.85,
   colorblind: false,
   minimap: true,

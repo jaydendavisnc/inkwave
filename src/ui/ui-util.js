@@ -205,7 +205,8 @@ export function fmtTime(s) {
   const m = Math.floor(t / 60), ss = t % 60;
   return `${m}:${ss < 10 ? '0' : ''}${ss}`;
 }
-export const fmtInt = (n) => Math.round(n).toLocaleString('en-US');
+const NF = new Intl.NumberFormat('en-US');
+export const fmtInt = (n) => NF.format(Math.round(n));
 /** Normalises a percentage that may be supplied as 0..1 or 0..100. */
 export function pct(a, b) {
   const both = [a, b].map((v) => +v || 0);

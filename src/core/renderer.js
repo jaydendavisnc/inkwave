@@ -1,58 +1,127 @@
-// Renderer + post stack (MSAA HDR target → optional GTAO → bloom → grade/vignette → output).
+// Renderer + post stack (MSAA HDR target → optional GTAO → bloom → final: bloom add + grade/vignette + tone map/sRGB).
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { QUALITY } from '../config.js';
 import { G } from './ctx.js';
 
-const GradeShader = {
-  uniforms: {
-    tDiffuse: { value: null },
-    uSat: { value: 1.08 },
-    uVib: { value: 0.12 },                               // extra saturation for muted colours only (ink never clips)
-    uContrast: { value: 1.07 },                          // log-space contrast around mid grey
-    uShadowTint: { value: new THREE.Vector3(0.975, 0.99, 1.035) },
-    uHighTint: { value: new THREE.Vector3(1.025, 1.0, 0.972) },
-    uLift: { value: 0.0 },
-    uVignette: { value: 0.22 },
-    uHurt: { value: 0 },
-    uHurtColor: { value: new THREE.Color(1, 0.2, 0.3) },
-    uFlash: { value: 0 },
-    uAspect: { value: 1.7 },
-  },
-  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-  fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform float uSat; uniform float uVignette; uniform float uHurt; uniform vec3 uHurtColor; uniform float uFlash; uniform float uAspect;
-    uniform float uVib; uniform float uContrast; uniform vec3 uShadowTint; uniform vec3 uHighTint; uniform float uLift;
-    varying vec2 vUv;
-    void main(){
-      vec4 c = texture2D(tDiffuse, vUv);
-      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-      // vibrance: muted colours gain saturation, already-saturated ones (team ink) barely move
-      float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
-      float chroma = (mx - mn) / max(mx, 1e-4);
-      c.rgb = max(mix(vec3(l), c.rgb, uSat + uVib * (1.0 - smoothstep(0.1, 0.7, chroma))), 0.0);
-      // contrast in log space around mid grey (keeps HDR highlights ordered), then a cool-shadow / warm-light split tone
-      c.rgb = 0.18 * pow(max(c.rgb, vec3(1e-6)) / 0.18, vec3(uContrast)) + uLift;
-      // split tone is for the world's neutrals: strongly saturated colours (team ink) keep their exact hue
-      float lt = smoothstep(0.015, 0.55, l);
-      c.rgb *= mix(vec3(1.0), mix(uShadowTint, uHighTint, lt), 1.0 - 0.85 * smoothstep(0.35, 0.8, chroma));
-      vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
-      float r = length(q);
-      float v = smoothstep(0.55, 1.25, r);
-      c.rgb *= 1.0 - uVignette * v;
-      // low health: the HUD draws the coloured edge; here we only drain saturation + darken the rim slightly
-      float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-      c.rgb = mix(c.rgb, vec3(lum), uHurt * 0.45);
-      c.rgb *= 1.0 - uHurt * 0.25 * smoothstep(0.4, 1.2, r);
-      c.rgb += uFlash;
-      gl_FragColor = c;
-    }`,
-};
+// The shadow pass draws every caster with one shared depth material, whose program key flips between instanced, skinned
+// and plain meshes (a full program lookup per switch). Those get their own unless they need three's per-material variant.
+function ownDepthMaterial(proto, variants) {
+  const mats = Array.from({ length: variants }, () => new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }));
+  Object.defineProperty(proto, 'customDepthMaterial', {
+    get() {
+      if (this._cdm !== undefined) return this._cdm;
+      const m = this.material;
+      if (Array.isArray(m) || m.alphaTest > 0 || m.alphaToCoverage || m.displacementMap || m.clippingPlanes?.length) return undefined;
+      return mats[this.instanceColor ? 1 : 0];
+    },
+    set(v) { this._cdm = v; },
+  });
+}
+ownDepthMaterial(THREE.InstancedMesh.prototype, 2);
+ownDepthMaterial(THREE.SkinnedMesh.prototype, 1);
+
+// The last full-screen pass: bloom's additive composite (UnrealBloomPass's own blend step is switched off), the colour
+// grade and, when it draws to the canvas, tone mapping + sRGB (what OutputPass did). One read + one write of the frame
+// instead of three. With screen FX running it renders the HDR variant and screen FX → OutputPass finish the frame.
+const FINAL_FRAG = /* glsl */`
+  precision highp float;
+  uniform sampler2D tDiffuse; uniform sampler2D tBloom;
+  uniform float uSat; uniform float uVignette; uniform float uHurt; uniform vec3 uHurtColor; uniform float uFlash; uniform float uAspect;
+  uniform float uVib; uniform float uContrast; uniform vec3 uShadowTint; uniform vec3 uHighTint; uniform float uLift;
+  #include <tonemapping_pars_fragment>
+  #include <colorspace_pars_fragment>
+  varying vec2 vUv;
+  void main(){
+    vec4 c = texture2D(tDiffuse, vUv);
+    // bloom, added as UnrealBloomPass's blend did (premultiplied AdditiveBlending = ONE, ONE); 1×1 black when off
+    c += texture2D(tBloom, vUv);
+    float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    // vibrance: muted colours gain saturation, already-saturated ones (team ink) barely move
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    float chroma = (mx - mn) / max(mx, 1e-4);
+    c.rgb = max(mix(vec3(l), c.rgb, uSat + uVib * (1.0 - smoothstep(0.1, 0.7, chroma))), 0.0);
+    // contrast in log space around mid grey (keeps HDR highlights ordered), then a cool-shadow / warm-light split tone
+    c.rgb = 0.18 * pow(max(c.rgb, vec3(1e-6)) / 0.18, vec3(uContrast)) + uLift;
+    // split tone is for the world's neutrals: strongly saturated colours (team ink) keep their exact hue
+    float lt = smoothstep(0.015, 0.55, l);
+    c.rgb *= mix(vec3(1.0), mix(uShadowTint, uHighTint, lt), 1.0 - 0.85 * smoothstep(0.35, 0.8, chroma));
+    vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
+    float r = length(q);
+    float v = smoothstep(0.55, 1.25, r);
+    c.rgb *= 1.0 - uVignette * v;
+    // low health: the HUD draws the coloured edge; here we only drain saturation + darken the rim slightly
+    float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    c.rgb = mix(c.rgb, vec3(lum), uHurt * 0.45);
+    c.rgb *= 1.0 - uHurt * 0.25 * smoothstep(0.4, 1.2, r);
+    c.rgb += uFlash;
+    #ifdef TO_SCREEN
+      #if defined( NEUTRAL_TONE_MAPPING )
+        c.rgb = NeutralToneMapping(c.rgb);
+      #elif defined( ACES_FILMIC_TONE_MAPPING )
+        c.rgb = ACESFilmicToneMapping(c.rgb);
+      #elif defined( AGX_TONE_MAPPING )
+        c.rgb = AgXToneMapping(c.rgb);
+      #elif defined( LINEAR_TONE_MAPPING )
+        c.rgb = LinearToneMapping(c.rgb);
+      #endif
+      #ifdef SRGB_TRANSFER
+        c = sRGBTransferOETF(c);
+      #endif
+    #endif
+    gl_FragColor = c;
+  }`;
+const FINAL_VERT = /* glsl */`
+  precision highp float;
+  uniform mat4 modelViewMatrix; uniform mat4 projectionMatrix;
+  attribute vec3 position; attribute vec2 uv;
+  varying vec2 vUv;
+  void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const TONE_DEFINE = { [THREE.NeutralToneMapping]: 'NEUTRAL_TONE_MAPPING', [THREE.ACESFilmicToneMapping]: 'ACES_FILMIC_TONE_MAPPING', [THREE.AgXToneMapping]: 'AGX_TONE_MAPPING', [THREE.LinearToneMapping]: 'LINEAR_TONE_MAPPING' };
+
+class FinalPass extends Pass {
+  constructor(renderer) {
+    super();
+    this.uniforms = {
+      tDiffuse: { value: null }, tBloom: { value: null }, toneMappingExposure: { value: 1 },
+      uSat: { value: 1.08 },
+      uVib: { value: 0.12 },                               // extra saturation for muted colours only (ink never clips)
+      uContrast: { value: 1.07 },                          // log-space contrast around mid grey
+      uShadowTint: { value: new THREE.Vector3(0.975, 0.99, 1.035) },
+      uHighTint: { value: new THREE.Vector3(1.025, 1.0, 0.972) },
+      uLift: { value: 0.0 },
+      uVignette: { value: 0.22 },
+      uHurt: { value: 0 },
+      uHurtColor: { value: new THREE.Color(1, 0.2, 0.3) },
+      uFlash: { value: 0 },
+      uAspect: { value: 1.7 },
+    };
+    const screen = { TO_SCREEN: '' };
+    if (TONE_DEFINE[renderer.toneMapping]) screen[TONE_DEFINE[renderer.toneMapping]] = '';
+    if (THREE.ColorManagement.getTransfer(renderer.outputColorSpace) === THREE.SRGBTransfer) screen.SRGB_TRANSFER = '';
+    const mat = (defines) => new THREE.RawShaderMaterial({ name: 'InkwaveFinal', uniforms: this.uniforms, defines, vertexShader: FINAL_VERT, fragmentShader: FINAL_FRAG, depthTest: false, depthWrite: false });
+    this.hdrMaterial = mat({});
+    this.screenMaterial = mat(screen);
+    this._quad = new FullScreenQuad(this.screenMaterial);
+    this._black = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    this._black.needsUpdate = true;
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    const u = this.uniforms;
+    u.tDiffuse.value = readBuffer.texture;
+    u.toneMappingExposure.value = renderer.toneMappingExposure;
+    u.tBloom.value = this.bloom && this.bloom.enabled ? this.bloom.renderTargetsHorizontal[0].texture : this._black;
+    this._quad.material = this.renderToScreen ? this.screenMaterial : this.hdrMaterial;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this._quad.render(renderer);
+  }
+}
 
 // r186's PCF filter uses a 5-tap rotated Vogel disk with per-pixel noise, which reads as grainy stipple on every soft
 // shadow edge. Swap it for a noise-free 3×3 grid of hardware-compared (bilinear) taps: smooth and temporally stable.
@@ -73,6 +142,11 @@ export class Renderer {
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.0;
     r.info.autoReset = false;
+    // Pin every program: three destroys a GL program once no material uses it, and characters / showcase / podium are
+    // disposed and rebuilt on every menu <-> match switch, so each switch re-linked the same shaders (a blocking
+    // 0.5-1 s). Never freed: the variant set is bounded (~200 programs).
+    const progs = r.info.programs;
+    progs.push = (...p) => { for (const x of p) x.usedTimes++; return Array.prototype.push.apply(progs, p); };
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
     r.setClearColor(0x9fd8f0, 1);
@@ -107,6 +181,9 @@ export class Renderer {
     this.gtao = null;
     if (q.ao) {
       const ao = (this.gtao = new GTAOPass(this.scene, this.camera, w, h));
+      // half-res AO: a soft term (the level also has baked AO), and full res cost ~3 ms/frame at 2560x1600
+      const aoSize = ao.setSize.bind(ao);
+      ao.setSize = (aw, ah) => aoSize(Math.max(1, aw >> 1), Math.max(1, ah >> 1));
       ao.output = GTAOPass.OUTPUT.Default;
       ao.blendIntensity = 1.0;
       ao.updateGtaoMaterial({ radius: 0.75, distanceExponent: 1.6, thickness: 1.0, scale: 1.15, samples: 12, distanceFallOff: 1.0 });
@@ -116,12 +193,16 @@ export class Renderer {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.45, 2.4);
     this.bloom.enabled = !!(q.bloom && this.settings.bloom);
     comp.addPass(this.bloom);
-    this.grade = new ShaderPass(GradeShader);
     this._gradeSrc = null;
+    // bloom stops at its composite texture; the final pass adds it (one full-screen blend fewer)
+    this.bloom.blendMaterial.visible = false;
+    this.grade = new FinalPass(r);
+    this.grade.bloom = this.bloom;
     comp.addPass(this.grade);
-    // optional screen-FX pass (src/fx/screenfx.js) — runs in HDR linear space before tone mapping/output
+    // optional screen-FX pass (src/fx/screenfx.js) — HDR linear, so while it runs the final pass stays HDR and
+    // OutputPass tone maps after it; otherwise the final pass draws straight to the canvas
     if (this.extraPass) comp.addPass(this.extraPass);
-    comp.addPass(new OutputPass());
+    comp.addPass((this.output = new OutputPass()));
     r.shadowMap.enabled = this.settings.shadows !== false;
     this._w = w; this._h = h;
     this.grade.uniforms.uAspect.value = w / h;
@@ -163,7 +244,6 @@ export class Renderer {
     this._w = w; this._h = h;
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
-    this.gtao?.setSize(w, h);
     this.grade.uniforms.uAspect.value = w / h;
     if (this.camera) { this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); }
   }
@@ -179,6 +259,7 @@ export class Renderer {
       if (gr.uShadowTint) u.uShadowTint.value.set(...gr.uShadowTint);
       if (gr.uHighTint) u.uHighTint.value.set(...gr.uHighTint);
     }
+    if (this.output) this.output.enabled = this.forceOutput || !!(this.extraPass && this.extraPass.enabled);
     this.composer.render();
   }
 }

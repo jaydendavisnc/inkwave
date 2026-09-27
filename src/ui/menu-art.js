@@ -5,7 +5,7 @@
 //   InkWipe(host, { isFrozen })  .run({ a, b, mode:'full'|'light'|'fade', dir, onMid, onDone })
 //   createPreview(key, ctx) → { el, set(value, settings), tick(dt) }       — settings live previews
 import {
-  h, clamp, lerp, easeInOutCubic, easeOutBack, easeOutCubic, rng, splatShape, splatSVG, shade, fmtInt, safeCall,
+  h, clamp, lerp, easeInOutCubic, easeOutBack, rng, splatShape, splatSVG, shade, fmtInt, safeCall,
 } from './ui-util.js';
 import { SQUID, GLYPHS, WEAPON_ICONS, SPLAT_ICON, SPECIAL_ICONS, mouseGlyph, padGlyph, keycap } from './ui-icons.js';
 

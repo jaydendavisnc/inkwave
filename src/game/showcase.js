@@ -1514,7 +1514,8 @@ export class Showcase {
     const key = [req.kind || 'head', req.size | 0 || 128, '#' + this._c2.set(req.color || this.color).getHexString(), req.weapon || '',
       ...Object.keys(req.style || {}).sort().map((k) => `${k}:${req.style[k]}`)].join('|');
     const hit = this._pcache.get(key);
-    if (hit) { cb(copyCanvas(hit)); return null; }
+    // cached: still answer on the next frame, after the screen asking for it is in the document (before its first paint)
+    if (hit) { let live = true; requestAnimationFrame(() => { if (live) cb(copyCanvas(hit)); }); return { cancel: () => { live = false; } }; }
     let q = this._pq.find((x) => x.key === key);
     if (q) q.cbs.push(cb); else this._pq.push((q = { key, req: { ...req, style: { ...(req.style || {}) } }, cbs: [cb] }));
     // handle: cancel() drops this request (a job nobody waits for any more is skipped, never rendered)
@@ -1665,7 +1666,7 @@ export class Showcase {
   // Compile every showcase shader (pedestal, ink, FX pools, a squidkid under these lights, the portrait resolve)
   // asynchronously once, right after boot, so the first loadout / locker / portrait never hitches on a compile.
   _warmup() {
-    if (this._warmState) return;
+    if (this._warmState) return this._warmP;
     this._warmState = 'busy';
     const r = this.r;
     try {
@@ -1683,9 +1684,18 @@ export class Showcase {
         if (!PEDESTAL.has(this.mode)) this.stageL.group.visible = stageWas && PEDESTAL.has(this.mode);
         this._warmState = 'done';
       };
-      const p1 = r.compileAsync ? r.compileAsync(this.scene, this.camera) : Promise.resolve(r.compile(this.scene, this.camera));
-      const p2 = r.compileAsync ? r.compileAsync(this._presScene, this.compCam) : Promise.resolve(r.compile(this._presScene, this.compCam));
-      Promise.all([p1, p2]).then(done, (e) => { console.warn('[showcase] warm-up', e); done(); });
+      // compile against the targets these scenes really draw into: programs are keyed on the bound target's tone mapping
+      // / colour space, so compiling for the canvas would only produce variants the first real frame throws away
+      const compile = (scene, cam, target) => {
+        const prev = r.getRenderTarget();
+        r.setRenderTarget(target);
+        const p = r.compileAsync ? r.compileAsync(scene, cam) : Promise.resolve(r.compile(scene, cam));
+        r.setRenderTarget(prev);
+        return p;
+      };
+      const p1 = compile(this.scene, this.camera, this._target());
+      const p2 = compile(this._presScene, this.compCam, this._prt8);
+      return (this._warmP = Promise.all([p1, p2]).then(done, (e) => { console.warn('[showcase] warm-up', e); done(); }));
     } catch (e) { console.warn('[showcase] warm-up', e); this._warmState = 'done'; }
   }
 

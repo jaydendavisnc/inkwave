@@ -60,8 +60,8 @@
 @keyframes iw-sq-glow { 50% { filter: drop-shadow(0 calc(var(--u) * .18) 0 rgba(0, 0, 0, .45)) drop-shadow(0 0 calc(var(--u) * .6) var(--tc)) brightness(1.18); translate: 0 calc(var(--u) * -.15); } }
 @keyframes iw-sq-readyflash { 0% { scale: 1.5; filter: brightness(2.2) drop-shadow(0 0 8px #fff); } }
 .iw-sq__you { position: absolute; left: 50%; bottom: calc(var(--u) * -1.25); width: 0; height: 0; margin-left: -6px; border: 6px solid transparent; border-bottom: 7px solid #fff; transform: rotate(180deg); opacity: 0;
-  filter: drop-shadow(0 0 1px var(--k)) drop-shadow(0 0 1px var(--k)); animation: iw-you 1.4s ease-in-out infinite; }
-.iw-sq.is-self .iw-sq__you { opacity: 1; }
+  filter: drop-shadow(0 0 1px var(--k)) drop-shadow(0 0 1px var(--k)); }
+.iw-sq.is-self .iw-sq__you { opacity: 1; animation: iw-you 1.4s ease-in-out infinite; }
 @keyframes iw-you { 50% { translate: 0 2px; } }
 
 .iw-timer { position: relative; display: grid; place-items: center; width: calc(var(--u) * 9.6); height: calc(var(--u) * 4.7); isolation: isolate; }
@@ -359,7 +359,10 @@
 /* ------------------------------------------------------------------ ally markers + ally-down pings */
 .iw-mk { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: calc(1 - var(--far, 0) * .45); }
 .iw-mk__tag { position: absolute; left: 0; bottom: 9px; translate: -50% 0; display: flex; align-items: center; gap: 4px; padding: 3px 9px 4px 5px; border-radius: 999px; background: var(--c); color: var(--c-ink); white-space: nowrap;
-  font: 800 var(--fs-xs) / 1 'Rubik', sans-serif; box-shadow: 0 0 0 2px var(--k), 0 2px 0 2px rgba(0, 0, 0, .3); scale: calc(1 - var(--far, 0) * .18); transform-origin: 50% 100%; }
+  font: 800 var(--fs-xs) / 1 'Rubik', sans-serif; box-shadow: 0 0 0 2px var(--k), 0 2px 0 2px rgba(0, 0, 0, .3); scale: calc(1 - var(--far, 0) * .18); transform-origin: 50% 100%;
+  /* --far changes every frame while you move: as a fixed-scale layer the GPU scales it instead of Chrome re-rasterising
+     the tag (and its name) at each new size, three tags × ~100 repaints/s */
+  will-change: transform, scale; }
 .iw-mk__w { display: block; width: 1.9em; height: 1.4em; flex: none; }
 .iw-mk__w:empty { display: none; }
 .iw-mk__w svg { width: 100%; height: 100%; color: #fff; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .3)); }

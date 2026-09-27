@@ -15,7 +15,6 @@ const V3 = THREE.Vector3;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-const smax = (a, b, k) => { const h = clamp(0.5 + (0.5 * (a - b)) / k, 0, 1); return lerp(b, a, h) + k * h * (1 - h); };
 const gauss = (x, s) => Math.exp(-((x / s) ** 2));
 const TAU = Math.PI * 2;
 
@@ -119,7 +118,6 @@ for (let s = 0; s < HAIR_MAX; s++) for (let k = 0; k < HAIR_SEGS; k++) BONE_PARE
 for (const [n, p] of EXTRA_BONES) BONE_PARENT[n] = p;
 for (const [n, , p] of EXTRA_BONES) if (p) REST_BODY[n] = p.clone();
 /** Names of the bones beyond the core skeleton (see docs/RIG.md → Added bones). */
-export const ADDED_BONES = EXTRA_BONES.map((b) => b[0]);
 
 // ------------------------------------------------------------------------------------------------
 // Head surface (analytic, so face decals and hair hug it exactly)
@@ -352,16 +350,6 @@ export function sweep(points, opts = {}) {
 }
 
 /** Grid over (u,v) in [0,1]^2 → fn(u, v, outPos); indexed, merged, smooth normals. */
-function surfaceGrid(nu, nv, fn) {
-  const pos = [], idx = []; const p = new V3();
-  for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) { fn(i / nu, j / nv, p); pos.push(p.x, p.y, p.z); }
-  for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const a = j * (nu + 1) + i, b = a + 1, c = a + nu + 2, d = a + nu + 1; idx.push(a, b, c, a, c, d); }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  return finalize(g);
-}
-
 /**
  * Structured grid with explicit rows: rows[j] = array of V3 (all rows the same length nu).
  * wrapU closes the ring (seam normals averaged, seam column duplicated so uv stays continuous).

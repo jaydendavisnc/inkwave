@@ -102,9 +102,7 @@ uniform int uMat;
 uniform int uOne;   // = 1: non-constant trip counts, so drivers keep loops rolled (short cold compile)
 uniform vec2 uHRange;  // height range (m) mapped to orm.a 0..1
 uniform float uAO;     // depth-occlusion strength
-layout(location = 0) out vec4 oAlb;   // -> albedo (sRGB attachment, hardware-encoded)
-layout(location = 1) out vec4 oNrm;
-layout(location = 2) out vec4 oOrm;
+layout(location = 0) out vec4 oOut;   // TL_OUT 0: albedo (sRGB target, hardware-encoded) · 1: normal · 2: orm
 #define PI 3.14159265
 #define TAU 6.28318531
 struct S { vec3 alb; float a; float h; float cav; float rough; float metal; };
@@ -193,9 +191,13 @@ void main() {
   float dx = (hs[1] - hs[0] + hs[3] - hs[2]) / (2.0 * PX);
   float dy = (hs[2] - hs[0] + hs[3] - hs[1]) / (2.0 * PX);
   float h = (hs[0] + hs[1] + hs[2] + hs[3]) * 0.25;
-  oAlb = vec4(alb * 0.25, alpha * 0.25);
-  oNrm = vec4(normalize(vec3(-dx, -dy, 1.0)) * 0.5 + 0.5, 1.0);
-  oOrm = vec4(cav * 0.25, rough * 0.25, metal * 0.25, clamp((h - uHRange.x) / (uHRange.y - uHRange.x), 0.0, 1.0));
+#if TL_OUT == 0
+  oOut = vec4(alb * 0.25, alpha * 0.25);
+#elif TL_OUT == 1
+  oOut = vec4(normalize(vec3(-dx, -dy, 1.0)) * 0.5 + 0.5, 1.0);
+#else
+  oOut = vec4(cav * 0.25, rough * 0.25, metal * 0.25, clamp((h - uHRange.x) / (uHRange.y - uHRange.x), 0.0, 1.0));
+#endif
 }
 `;
 
@@ -1329,29 +1331,25 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
   const L = MATERIALS.length;
   const aniso = Math.min(16, renderer.capabilities.getMaxAnisotropy());
 
-  // one array target with three colour attachments (albedo sRGB, normal + orm linear), written in one MRT pass
-  const out = new THREE.WebGLArrayRenderTarget(size, size, L, {
-    count: 3, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, colorSpace: THREE.SRGBColorSpace,
-    wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
-    magFilter: THREE.LinearFilter, minFilter: THREE.LinearMipmapLinearFilter,
-    generateMipmaps: true, anisotropy: aniso, depthBuffer: false, stencilBuffer: false,
+  // three single-attachment array targets (albedo sRGB, normal + orm linear), one program variant each. Not one MRT
+  // pass: ANGLE's D3D backend links for one output and recompiles MRT programs serially at the first draw (~4 s cold);
+  // single-output variants all compile in parallel at link time.
+  const outs = ['albedo', 'normal', 'orm'].map((name, k) => {
+    const o = new THREE.WebGLArrayRenderTarget(size, size, L, {
+      type: THREE.UnsignedByteType, format: THREE.RGBAFormat, colorSpace: k ? THREE.NoColorSpace : THREE.SRGBColorSpace,
+      wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+      magFilter: THREE.LinearFilter, minFilter: THREE.LinearMipmapLinearFilter,
+      generateMipmaps: true, anisotropy: aniso, depthBuffer: false, stencilBuffer: false,
+    });
+    o.texture.name = 'texlib.' + name;
+    return o;
   });
-  for (let k = 1; k < 3; k++) {   // three only makes attachment 0 an array texture; swap the others in
-    const t = new THREE.DataArrayTexture(null, size, size, L);
-    const t0 = out.texture;
-    for (const k2 of ['format', 'type', 'wrapS', 'wrapT', 'magFilter', 'minFilter', 'anisotropy', 'generateMipmaps', 'flipY', 'internalFormat']) t[k2] = t0[k2];
-    t.colorSpace = THREE.NoColorSpace;
-    t.isRenderTargetTexture = true;
-    t.renderTarget = out;
-    out.textures[k] = t;
-  }
-  out.textures[0].name = 'texlib.albedo'; out.textures[1].name = 'texlib.normal'; out.textures[2].name = 'texlib.orm';
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const raw = (fs, uniforms) => new THREE.RawShaderMaterial({
-    glslVersion: THREE.GLSL3, vertexShader: GEN_VS, fragmentShader: fs, uniforms, depthTest: false, depthWrite: false,
+  const raw = (fs, uniforms, k) => new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3, vertexShader: GEN_VS, fragmentShader: fs, uniforms, defines: { TL_OUT: k }, depthTest: false, depthWrite: false,
   });
   // one uber-program per material group (the original layers / the marina set): one driver compile + pipeline per
   // group instead of one per layer, and the two compile in parallel (cold start matters) while each stays small
@@ -1360,15 +1358,24 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
     uHRange: { value: new THREE.Vector2() }, uAO: { value: 0.5 },
   };
   const groups = [0, 1, 2].map((g) => MATERIALS.map((m, i) => [m, i]).filter(([m]) => (m.group || 0) === g)).filter((l) => l.length);
-  const progs = groups.map((list) => {
+  const srcs = groups.map((list) => {
     const fns = list.map(([m, i]) => `void prep${i}(${PREP_SIG}) {\n  ${m.prep}\n}\nvoid surf${i}(${SURF_SIG}) {${m.surf}\n}`).join('\n');
     const sw = (fn, args) => list.map(([, i], k) => `${k ? 'else ' : ''}if (uMat == ${i}) ${fn}${i}(${args});`).join('\n  ');
-    return raw(GEN_COMMON + fns + GEN_MAIN.replace('PREP_SWITCH', sw('prep', 'uv, P, f, w')).replace('SURF_SWITCH', sw('surf', 'uv, P, n, c, s')), uniforms);
+    return GEN_COMMON + fns + GEN_MAIN.replace('PREP_SWITCH', sw('prep', 'uv, P, f, w')).replace('SURF_SWITCH', sw('surf', 'uv, P, n, c, s'));
   });
-  const scene = new THREE.Scene();
-  const quads = progs.map((p) => { const q = new THREE.Mesh(geo, p); q.frustumCulled = false; scene.add(q); return q; });
+  // per output: a scene holding one quad per group (the layer's group is the visible one)
+  const passes = outs.map((o, k) => {
+    const scene = new THREE.Scene();
+    const quads = srcs.map((fs) => { const q = new THREE.Mesh(geo, raw(fs, uniforms, k)); q.frustumCulled = false; scene.add(q); return q; });
+    return { o, scene, quads };
+  });
   const groupOf = new Map(groups.flatMap((list, k) => list.map(([, i]) => [i, k])));
-  await renderer.compileAsync(scene, cam);   // async (and parallel) where KHR_parallel_shader_compile exists
+  // async (and parallel) where KHR_parallel_shader_compile exists; each bound to its target, since program variants
+  // are keyed on the target (compiled for the canvas they'd be thrown away and re-linked, blocking, at the first draw)
+  const prevRT0 = renderer.getRenderTarget();
+  const compiling = passes.map((p) => { renderer.setRenderTarget(p.o); return renderer.compileAsync(p.scene, cam); });
+  renderer.setRenderTarget(prevRT0);
+  await Promise.all(compiling);
   const tCompiled = performance.now();
 
   const prevRT = renderer.getRenderTarget();
@@ -1376,27 +1383,28 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
   const prevXR = renderer.xr.enabled;
   renderer.autoClear = false;
   renderer.xr.enabled = false;
-  renderer.initRenderTarget(out);
-  for (const t of out.textures) t.generateMipmaps = false;   // build the mip chain once, after the last layer
+  for (const p of passes) p.o.texture.generateMipmaps = false;   // build each mip chain once, after the last layer
 
   for (let i = 0; i < L; i++) {
     const m = MATERIALS[i];
-    quads.forEach((q, k) => { q.visible = k === groupOf.get(i); });
     uniforms.uMat.value = i;
     uniforms.uScale.value = m.scale;
     uniforms.uHRange.value.set(m.hr[0], m.hr[1]);
     uniforms.uAO.value = m.ao;
-    if (i === L - 1) for (const t of out.textures) t.generateMipmaps = true;
-    renderer.setRenderTarget(out, i);
-    renderer.render(scene, cam);
+    for (const p of passes) {
+      p.quads.forEach((q, k) => { q.visible = k === groupOf.get(i); });
+      if (i === L - 1) p.o.texture.generateMipmaps = true;
+      renderer.setRenderTarget(p.o, i);
+      renderer.render(p.scene, cam);
+    }
   }
   // wait for the GPU so the reported time is honest (one-pixel readback)
-  renderer.readRenderTargetPixels(out, 0, 0, 1, 1, new Uint8Array(4), undefined, 2);
+  renderer.readRenderTargetPixels(outs[2], 0, 0, 1, 1, new Uint8Array(4));
 
   renderer.setRenderTarget(prevRT);
   renderer.autoClear = prevAutoClear;
   renderer.xr.enabled = prevXR;
-  progs.forEach((p) => p.dispose());
+  for (const p of passes) p.quads.forEach((q) => q.material.dispose());
   geo.dispose();
 
   const layers = {}, meta = {};
@@ -1406,14 +1414,14 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
   });
   const t1 = performance.now();
   return {
-    albedo: out.textures[0],
-    normal: out.textures[1],
-    orm: out.textures[2],
+    albedo: outs[0].texture,
+    normal: outs[1].texture,
+    orm: outs[2].texture,
     layers,
     meta,
     names: MATERIALS.map((m) => m.name),
     size,
     stats: { ms: +(t1 - t0).toFixed(1), compileMs: +(tCompiled - t0).toFixed(1), size },
-    dispose() { out.dispose(); },
+    dispose() { outs.forEach((o) => o.dispose()); },
   };
 }

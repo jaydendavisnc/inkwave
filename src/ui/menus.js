@@ -89,6 +89,7 @@ const SETTINGS_TABS = [
     { key: 'shadows', label: 'Shadows', type: 'toggle', help: 'Soft sun shadows. Turn off for extra speed on older machines.' },
     { key: 'bloom', label: 'Bloom glow', type: 'toggle', help: 'A soft glow around bright ink and specials.' },
     { key: 'showFps', label: 'Show FPS counter', type: 'toggle', help: 'Displays frames per second in the corner during matches.' },
+    { key: 'fullscreen', label: 'Fullscreen matches', type: 'toggle', help: 'Matches go fullscreen, so Esc opens and closes the pause menu without letting go of the mouse. Hold Esc to leave fullscreen.' },
   ] },
   { id: 'audio', label: 'Audio', icon: 'speaker', rows: [
     { key: 'master', label: 'Master volume', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Overall loudness of everything.' },

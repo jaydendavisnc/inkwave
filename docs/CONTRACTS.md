@@ -216,7 +216,8 @@ hills silhouettes, a few gulls, buoys. Must not contain anything inside the play
   subscribes to the event bus (docs/EVENTS.md) and falls back to polling actor state.
 - **Decor**: `decor.pulse(team, strength)` flares a spawn pad (respawns, super jumps home).
 - **Screen FX (src/fx/screenfx.js)**: `new ScreenFX(R, G)` installs one post pass via `R.setExtraPass(pass)` (after the
-  grade pass, before OutputPass) and is updated with `update(dt, game)`; it listens to the bus. Intense effects scale
+  grade, before OutputPass; OutputPass only runs while the pass is enabled, otherwise the renderer's final pass tone maps
+  straight to the canvas) and is updated with `update(dt, game)`; it listens to the bus. Intense effects scale
   with settings.cameraShake / reduced motion.
 - **Renderer**: `R.setExtraPass(pass)`, `R.setDynamicScale(s)`; environment exposes `env.grade` (per-theme colour grade)
   which the renderer applies automatically.

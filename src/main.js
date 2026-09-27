@@ -1,6 +1,6 @@
 // INKWAVE — boot, main loop and game-flow orchestration (menus ⇄ attract mode ⇄ matches ⇄ results).
 import * as THREE from 'three';
-import { G, on, emit, clamp, damp } from './core/ctx.js';
+import { G, on, clamp, damp } from './core/ctx.js';
 import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { mapTheme,
@@ -20,7 +20,7 @@ import { Physics, Hit } from './game/physics.js';
 import { NavGraph } from './game/nav.js';
 import { Projectiles } from './game/weapons.js';
 import { CameraRig } from './game/cameraRig.js';
-import { Match } from './game/match.js';
+import { Match, prerollBotLooks } from './game/match.js';
 import { Minimap } from './game/minimap.js';
 import { Showcase } from './game/showcase.js';
 
@@ -70,12 +70,14 @@ class Game {
     this.R = new Renderer(app, this.settings);
     G.renderer = this.R.renderer;
     const scene = (G.scene = new THREE.Scene());
+    scene.matrixWorldAutoUpdate = false;   // updated once per frame in _frame, not again by every render of it
     const camera = (G.camera = new THREE.PerspectiveCamera(this.settings.fov, innerWidth / innerHeight, 0.15, 6500));
     camera.position.set(0, 40, -60);
     this.R.setScene(scene, camera);
     this.input = G.input = new Input(this.R.renderer.domElement);
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
+    document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) navigator.keyboard?.unlock?.(); });
     // after a focus steal while the map was held, the next click on the game takes the mouse back (no pause detour)
     this.R.renderer.domElement.addEventListener('mousedown', () => {
       if (this._relock && G.mode === 'match' && this.match && !this.match.paused && !this.menus?.current) { this._relock = false; this.input.requestLock(); }
@@ -89,6 +91,9 @@ class Game {
     this.CharacterClass = charMod.Character;
     try { this.PropKit = (await import('./world/props.js')).PropKit; } catch (e) { console.error('[inkwave] prop kit failed to load', e); this.PropKit = null; }
     G.audio = audioMod.audio; G.music = musicMod.music;
+    // open the audio device now, behind the loading screen (~150 ms: device + reverb impulses). Without a gesture the
+    // context starts suspended; the first key / click resumes it (audio.js _installUnlock) instead of freezing that frame
+    G.audio?.init?.();
     await progress(0.15, 'Building the plaza…');
 
     // world
@@ -138,10 +143,34 @@ class Game {
     // warm up: compile every shader now so the first shot/splat never hitches
     await progress(0.85, 'Warming up…');
     this._warmup();
-    // compile in parallel (KHR_parallel_shader_compile) so the loading screen keeps animating instead of freezing
-    try { await G.renderer.compileAsync(scene, camera); } catch { G.renderer.compile(scene, camera); }
+    // compile in parallel (KHR_parallel_shader_compile) so the loading screen keeps animating instead of freezing.
+    // Programs are keyed on the bound render target (tone mapping / output colour space): compile against the
+    // composer's HDR buffer the scene is really drawn into, or every program here is a throwaway variant and the first
+    // frames compile the real ones one blocking link at a time. The menu showcase (pedestal kid, portraits) joins the
+    // same batch instead of freezing the first menu.
+    // Materials first drawn mid-match (bombs, storm clouds) join as hidden stand-ins: compile() gathers materials from
+    // invisible objects too. Screen-FX draws off the scene (the composite as a lone full-screen quad, the lens field in
+    // its own scene), and programs also key on the scene's lights and fog, so those compile as they are drawn.
+    const warm = new THREE.Group();
+    warm.visible = false;
+    warm.add(...G.projectiles.warmMeshes());
+    scene.add(warm);
+    const prevRT = G.renderer.getRenderTarget();
+    G.renderer.setRenderTarget(this.R.composer.renderTarget1);
+    const batch = [G.renderer.compileAsync(scene, camera)];
+    const sfx = this.screenfx;
+    if (sfx) batch.push(G.renderer.compileAsync(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sfx.mat), sfx.lens.cam), G.renderer.compileAsync(sfx.lens.scene, sfx.lens.cam));
+    G.renderer.setRenderTarget(prevRT);
+    scene.remove(warm);
+    batch.push(this.showcase._warmup(), G.env.ready);   // + env Worker jobs (sea textures, terrain)
+    try { await Promise.all(batch); } catch { /* a failed program surfaces on first draw */ }
     await progress(0.93, 'Warming up…');
-    for (let i = 0; i < 3; i++) { this._frame(1 / 60); await nextFrame(); }
+    // the main menu's 3D avatar: its first draw is the showcase kid's first real draw (D3D finishes those shaders on the
+    // GPU thread, ~0.6 s) — queue the same request now so the warm frames pay for it and the menu gets it from cache
+    this.menus?._portraitInto?.(document.createElement('span'), { kind: 'head', size: 160 });
+    // first warm frame takes the screen-FX route (final pass HDR → OutputPass) so both are compiled before play
+    for (let i = 0; i < 3; i++) { this.R.forceOutput = i === 0; this._frame(1 / 60); await nextFrame(); }
+    this.R.forceOutput = false;
     await progress(1, 'Ready!');
     await new Promise((r) => setTimeout(r, 250));
 
@@ -150,9 +179,11 @@ class Game {
     G.mode = 'menu';
     this.menus?.show(params.has('skipTitle') ? 'main' : 'title');
     this._applyAudioVolumes();
-    requestAnimationFrame(() => this._loop());
+    this._loopFn = (t) => this._loop(t);
+    requestAnimationFrame(this._loopFn);
     if (params.has('autostart')) this.api.startMatch({ mapId: map.id, difficulty: this.settings.difficulty, duration: +params.get('autostart') || this.settings.matchLength });
     this.bootMs = Math.round(performance.now() - t0);
+    prerollBotLooks();   // next match's bot hair, built while the menus idle
     window.__inkwave = this; // debug/audit hook
     window.__G = G;
     this.debug = {
@@ -322,6 +353,7 @@ class Game {
     saveJSON('inkwave.settings', this.settings);
     if ('quality' in partial || 'shadows' in partial || 'bloom' in partial) this.R?.applySettings(this.settings);
     if ('master' in partial || 'music' in partial || 'sfx' in partial) this._applyAudioVolumes();
+    if (partial.fullscreen === false) this._exitFullscreen();
     if ('colorblind' in partial && G.mode !== 'match') this._setPalette(this._pickPalette());
   }
   _applyAudioVolumes() { G.audio?.setVolumes?.({ master: this.settings.master, music: this.settings.music, sfx: this.settings.sfx }); }
@@ -353,6 +385,8 @@ class Game {
     // only a live round pauses on focus loss; intro / time's up / judge / results release the mouse on purpose.
     // Holding the map is never a reason to pause (some browsers/embeds steal focus on TAB): relock on the next click.
     if (this.match?.controller?.mapHeld || this.rig.mapK > 0) { this._relock = true; return; }
+    // (windowed) a lock lost right after resume() is the browser undoing that request, not the player leaving
+    if (performance.now() - (this._resumedAt ?? -1e9) < 500) { this._relock = true; return; }
     if (G.mode === 'match' && this.match && !this.match.paused && this.match.state === 'playing' && !this.menus?.current) this.pause();
   }
 
@@ -519,11 +553,12 @@ class Game {
     this.lastMatchOpts = opts;
     G.audio?.init?.();
     this.input.requestLock();
+    this._enterFullscreen();   // after the lock request: both need this click, and fullscreen uses it up
     this.menus?.show(null);
     await this._fade(1, 350);
     G.music?.stop?.(0.3); this._musicTrack = null;
     this.showcase.hide();
-    if (this.match) this.match.dispose();
+    if (this.match) { this.match.dispose(); this.match = G.match = null; }   // frames keep running through the awaits below
     G.projectiles.clear(); G.fx.clear?.(); G.paint.clear();
     const map = MAPS.find((m) => m.id === opts.mapId) || MAPS[0];
     if ((map.layout || map.id) !== this.layoutId) await this._buildWorld(map);
@@ -536,6 +571,7 @@ class Game {
       G.fx.setLighting?.(G.env.getSkyColors?.());
     }
     this._applyNight();   // after any stage rebuild too (new prop kit / decor)
+    await G.env.ready;    // a new stage's foam field comes from the env Worker
     this.mapDef = map;
     this._setPalette(this._pickPalette());
     const m = (this.match = G.match = new Match({
@@ -567,6 +603,16 @@ class Game {
     this._playMusic(null);
   }
 
+  // In a window Esc belongs to the browser: it drops the pointer lock and a relock then needs a click. Fullscreen with Esc
+  // captured (Keyboard Lock, Chromium) hands Esc to the game instead: pause() releases the lock itself, so resume() can
+  // take it back without a click. Needs the start / rematch click; otherwise play stays windowed with click-to-relock.
+  _enterFullscreen() {
+    if (!this.settings.fullscreen || document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+    if (navigator.userActivation && !navigator.userActivation.isActive) return;   // no click / key (autostart, gamepad)
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => navigator.keyboard?.lock?.(['Escape'])).catch(() => {});
+  }
+  _exitFullscreen() { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }
+
   pause() {
     if (!this.match || this.match.attract || this.match.paused) return;
     // only a live round (or its intro) can pause — never on top of time's up / judge / results
@@ -580,11 +626,15 @@ class Game {
     if (!this.match) return;
     this.menus?.show(null);
     this.match.paused = false;
+    // if the browser refuses the lock (windowed Esc, gamepad) the next click takes the mouse
+    this._relock = true;
+    this._resumedAt = performance.now();
     this.input.requestLock();
     G.audio?.duck?.(1, 0.01);
   }
   async quitToMenu() {
     this.input.exitLock();
+    this._exitFullscreen();
     this.menus?.show(null);
     await this._fade(1, 350);
     this.hud?.setVisible(false);
@@ -594,6 +644,7 @@ class Game {
     this._setPalette(this._pickPalette());
     this._startAttract();
     this.menus?.show('main');
+    prerollBotLooks();
     this._playMusic('menu');
     G.audio?.duck?.(1, 0.01);
     this._fade(0, 500);
@@ -630,6 +681,7 @@ class Game {
     this.showcase.showResults(0, won, G.teamColors[0], team.map((a) => ({ weapon: a.weaponId, style: a.character.style || { hair: a.slot % 4, skin: (a.slot * 3) % 4 }, name: a.name })));
     this.menus?.showResults(data);
     this.menus?.show('results');
+    prerollBotLooks();   // for a rematch
     G.audio?.play(won ? 'victory_fanfare' : 'defeat_jingle');
     setTimeout(() => this._playMusic(won ? 'results_win' : 'results_lose'), 2600);
   }
@@ -646,9 +698,12 @@ class Game {
   }
 
   // ---------------------------------------------------------------------------------------- loop
-  _loop() {
-    requestAnimationFrame(() => this._loop());
-    this.timer.update(); let dt = this.timer.getDelta();
+  _loop(now) {
+    requestAnimationFrame(this._loopFn);
+    // step by the frame's own (vsync-aligned) timestamp, not performance.now() at whatever moment this callback got to
+    // run: callback start times jitter by a few ms, which made dt alternate (e.g. 6 / 10 ms) at a steady 120 Hz and the
+    // motion judder even with no dropped frame
+    this.timer.update(now); let dt = this.timer.getDelta();
     if (this.frozen) return;
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc > 0.5) { this.fps = Math.round(this.fpsN / this.fpsAcc); this.fpsAcc = 0; this.fpsN = 0; }
@@ -742,6 +797,8 @@ class Game {
     this._frameN = (this._frameN || 0) + 1;
     if (this.settings.quality !== 'low' || (this._frameN & 1)) sm.needsUpdate = true;
     if (!this._skipRender) {
+      G.scene.updateMatrixWorld();
+      G.env.renderReflection?.(G.renderer, G.scene, G.camera);   // before, not nested in, the frame's render (see env)
       this.R.render();
       if (this.showcase.mode) sm.needsUpdate = true;
       this.showcase.render();
@@ -875,6 +932,7 @@ class Game {
     if (m.state === 'playing' && a.alive) {
       if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own super-jump hints
       else if (a.superJumpState) prompt = null;
+      else if (this._relock && !m.paused && !this.input.locked && this.input.lastDevice === 'kbm') prompt = 'Click to take back the mouse';
       else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = 'Low ink! Hold SHIFT in your ink to refill'; }
       else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = `Special ready! Press F`;
       else if (inkF < 0.25 && a.form !== 'squid') prompt = 'Hold SHIFT to swim in your ink and refill';

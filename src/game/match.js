@@ -1,11 +1,21 @@
 // Match: turf-war rules, lifecycle (intro → countdown → play → time's up → judge → results), team setup.
 import * as THREE from 'three';
-import { G, emit, on, clamp } from '../core/ctx.js';
-import { MATCH, PLAYER, WEAPON_ORDER, BOT_NAMES, TEAM_NAMES } from '../config.js';
+import { G, emit, on } from '../core/ctx.js';
+import { MATCH, PLAYER, WEAPON_ORDER, BOT_NAMES } from '../config.js';
 import { Actor } from './actor.js';
 import { BotBrain } from './bots.js';
 import { randomStyle } from './character-style.js';
 import { PlayerController } from './player.js';
+
+// Bot looks for the next match, rolled ahead so their hair (the costly part of a new character, ~20 ms for each style
+// not built yet) is built while the menus idle instead of on the match-start frame. Call from menu screens only.
+const nextLooks = [];
+const idle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn) : setTimeout(fn, 50));
+export function prerollBotLooks() {
+  while (nextLooks.length < 2 * MATCH.teamSize - 1) nextLooks.push(randomStyle());
+  const todo = [...nextLooks];
+  import('./character-geo.js').then(({ getHairStyle }) => { const step = () => { const st = todo.pop(); if (st) { getHairStyle(st); idle(step); } }; idle(step); });
+}
 
 const _v = new THREE.Vector3();
 
@@ -53,7 +63,7 @@ export class Match {
           team, slot: s, weapon: weapons[s], isLocal, isBot: !isLocal,
           name: isLocal ? (o.playerName || 'You') : names[ni++ % names.length],
           // the local player wears their locker look; everyone else is rolled (outfit/eyes derive from the name seed)
-          style: isLocal && o.style ? { ...o.style } : randomStyle(), CharacterClass,
+          style: isLocal && o.style ? { ...o.style } : (!this.attract && nextLooks.pop()) || randomStyle(), CharacterClass,
         });
         G.scene.add(a.character.root);
         if (!isLocal || o.autopilot) a.bot = new BotBrain(a, o.difficulty);

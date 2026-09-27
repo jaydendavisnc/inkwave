@@ -102,13 +102,6 @@ export function randomStyle(rng = Math.random) {
   };
 }
 
-/** Swatch colours for UI chips: { skin, eyes: [a, b], shirt, shorts, ... } of a (resolved) style. */
-export function styleSwatch(st) {
-  const s = resolveStyle(st);
-  const o = OUTFITS[s.outfit];
-  return { skin: SKIN_TONES[s.skin], eyes: IRIS[s.eyes], shirt: o.shirt, shorts: o.shorts, shoe: o.shoe, sock: o.sock, strap: o.strap };
-}
-
 /**
  * Write a resolved style's colours into a character uniform bundle (makeCharUniforms()): outfit colourway + pattern,
  * iris gradient, and the optional face uniforms. The Character constructor calls this.

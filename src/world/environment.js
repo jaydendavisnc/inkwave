@@ -12,12 +12,13 @@
 // level-derived hull / floating-slab sets (no sea inside hulls, deep shade under the decks), calm sheltered basin,
 // wall-bounced ripples, froth wherever something stands in the water (analytic for hulls, triangle ∩ water-plane
 // contours of the stage props for piles / fenders / boats), waterline strips on the faces (reflected-sun caustics +
-// hull wet band), a planar reflection of the stage (Environment._renderReflection, quality-scaled) and a baked
+// hull wet band), a planar reflection of the stage (Environment.renderReflection, quality-scaled) and a baked
 // far-reflection cube for the distant land. The other stages keep the original open-sea shader untouched.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PLAYER } from '../config.js';
 import { G } from '../core/ctx.js';
+import { mulberry, hash2, smooth, islandField, runJob } from './envgen.js';
 
 const WATER_Y = PLAYER.waterY; // -1.6
 const DEG = Math.PI / 180;
@@ -441,7 +442,7 @@ float swellAmp(float dDeck) { return mix(0.035, 0.16, smoothstep(3.0, 70.0, dDec
 //   • uWet (hulls, anything piercing the surface): never any sea inside; a lapping froth line hugs their sides
 //   • uRects (floating slabs): the water carries on underneath in deep shade — no sky showing through the gap
 //   • calm, glassy channels: wave normals damped near the faces, plus ripples bounced back off every face
-//   • planar reflection of the real scene (uReflTex, Environment._renderReflection) over the analytic sky + baked
+//   • planar reflection of the real scene (uReflTex, Environment.renderReflection) over the analytic sky + baked
 //     clouds; reflected geometry occludes the sun glints
 //   • colour: open harbour teal → darker bottle green hugging the faces
 const GLSL_SEA_MARINA = /* glsl */`
@@ -1058,19 +1059,6 @@ function patchScenery(mat, U, flags = {}) {
 // ---------------------------------------------------------------------------------------------------------------
 // JS helpers: seeded rng, value noise, geometry builders
 // ---------------------------------------------------------------------------------------------------------------
-function mulberry(seed) {
-  let a = seed >>> 0;
-  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-function hash2(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
-function vnoise(x, y) {
-  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
-  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
-  const a = hash2(ix, iy), b = hash2(ix + 1, iy), c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
-  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
-}
-function fbm(x, y, oct = 4) { let s = 0, a = 0.5, n = 0; for (let i = 0; i < oct; i++) { s += a * vnoise(x, y); n += a; x = x * 2.03 + 5.3; y = y * 2.03 - 1.7; a *= 0.5; } return s / n; }
-const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const polar = (deg, d) => [Math.cos(deg * DEG) * d, Math.sin(deg * DEG) * d];
 
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3();
@@ -1135,47 +1123,8 @@ function vcolorBy(g, fn) { // recolour vertices: fn(x,y,z,nx,ny,nz) -> THREE.Col
   return g;
 }
 
-// Tileable wave normal/height texture from integer-frequency sine sums (perfectly periodic).
-function makeWaveTexture(size = 256, seed = 11) {
-  const rnd = mulberry(seed);
-  const waves = [];
-  const wind = 0.55;
-  for (let i = 0; i < 44; i++) {
-    const f = 2 + Math.pow(rnd(), 1.5) * 26;
-    const ang = wind + (rnd() - 0.5) * 2.4;
-    let kx = Math.round(Math.cos(ang) * f), ky = Math.round(Math.sin(ang) * f);
-    if (kx === 0 && ky === 0) kx = 2;
-    const kl = Math.hypot(kx, ky);
-    waves.push([kx, ky, 1 / Math.pow(kl, 1.3), rnd() * Math.PI * 2]);
-  }
-  const N = size * size;
-  const H = new Float32Array(N), GX = new Float32Array(N), GY = new Float32Array(N);
-  let hMin = Infinity, hMax = -Infinity, gMax = 0;
-  const TAU = Math.PI * 2;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const u = x / size, v = y / size;
-      let h = 0, gx = 0, gy = 0;
-      for (let k = 0; k < waves.length; k++) {
-        const w = waves[k];
-        const ph = TAU * (w[0] * u + w[1] * v) + w[3];
-        const s = Math.sin(ph), c = Math.cos(ph);
-        h += w[2] * s; gx += w[2] * w[0] * c; gy += w[2] * w[1] * c;
-      }
-      const i = y * size + x;
-      H[i] = h; GX[i] = gx; GY[i] = gy;
-      if (h < hMin) hMin = h; if (h > hMax) hMax = h;
-      gMax = Math.max(gMax, Math.abs(gx), Math.abs(gy));
-    }
-  }
-  const data = new Uint8Array(N * 4);
-  for (let i = 0; i < N; i++) {
-    const hn = (H[i] - hMin) / (hMax - hMin);
-    data[i * 4] = Math.round((GX[i] / gMax * 0.5 + 0.5) * 255);
-    data[i * 4 + 1] = Math.round((GY[i] / gMax * 0.5 + 0.5) * 255);
-    data[i * 4 + 2] = Math.round(Math.pow(hn, 1.8) * 255);
-    data[i * 4 + 3] = 255;
-  }
+// Tileable wave normal/height texture (data: envgen.waveData).
+function makeWaveTexture(data, size = 256) {
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.magFilter = THREE.LinearFilter;
@@ -1255,74 +1204,12 @@ function hullGeo({ L, B, D, F, sheer = 0.3, hull = '#ffffff', stripe = '#3c6e8f'
   return mergeGeometries(parts);
 }
 
-// Smooth stylised island/hill (indexed radial grid → soft normals). Vertex colour = grass tint, 'glow' = baked fold AO
-// (the HZ_TERRAIN shader does grass/rock/sand by slope + height). Returns { geo, heightAt, localF, sample }.
+// Smooth stylised island/hill: height-field queries { heightAt, localF, sample } for placing scenery. The mesh
+// (vertex colour = grass tint, 'glow' = baked fold AO; the HZ_TERRAIN shader does grass/rock/sand by slope + height)
+// comes from envgen.islandMesh off the main thread.
 function makeIsland(o) {
-  const { x: cx, z: cz, rx, rz, h, seed = 1, rot = 0, plateau = false, R = 12, S = 44, grass = '#9ccf7f', ridge = 0.3 } = o;
-  const cr = Math.cos(rot), sr = Math.sin(rot);
-  const hLocal = (lx, lz) => {
-    const r = Math.hypot(lx, lz);
-    const a = Math.atan2(lz, lx);
-    const edge = 1 + (fbm(Math.cos(a) * 1.2 + seed * 3.7, Math.sin(a) * 1.2 - seed * 1.9, 3) - 0.5) * 0.34;
-    const f = r / edge;
-    if (f >= 1) return -(f - 1) * 30 - 0.6;
-    const n = fbm(lx * 1.15 + seed * 5.1, lz * 1.15 - seed * 2.3, 4);
-    if (plateau) return h * smooth(1.0, 0.8, f) * (0.92 + 0.16 * n) + (1 - f) * 0.6 - 0.35;
-    // rounded ridgelines: smooth |x| keeps crests soft (stylised, no knife edges), gentle spurs down the flanks
-    const q = 2 * fbm(lx * 1.7 + seed * 1.7, lz * 1.7 - seed * 0.9, 3) - 1;
-    const rg = 1 - Math.sqrt(q * q + 0.035);
-    const prof = Math.pow(1 - f * f, 1.35);
-    return h * prof * (0.52 + 0.6 * n + ridge * rg * rg) + (1 - f) * 0.6 - 0.35;
-  };
-  const toLocal = (wx, wz) => { const dx = wx - cx, dz = wz - cz; return [(dx * cr + dz * sr) / rx, (-dx * sr + dz * cr) / rz]; };
-  const toWorld = (lx, lz) => [cx + lx * rx * cr - lz * rz * sr, cz + lx * rx * sr + lz * rz * cr];
-  const pos = [], col = [], ao = [], idx = [], nor = [];
-  const tint = new THREE.Color(grass);
-  const dl = 0.05;
-  // smooth analytic normals from the height field (never the mesh facets)
-  const eW = Math.max(rx, rz) * 0.012;
-  const hW = (wx, wz) => { const [lx, lz] = toLocal(wx, wz); return hLocal(lx, lz); };
-  const push = (lx, lz, yOverride) => {
-    const [wx, wz] = toWorld(lx, lz);
-    const hy = yOverride ?? hLocal(lx, lz);
-    pos.push(wx, WATER_Y + hy, wz);
-    if (yOverride !== undefined) nor.push(0, 1, 0);
-    else {
-      const gx = (hW(wx + eW, wz) - hW(wx - eW, wz)) / (2 * eW), gz = (hW(wx, wz + eW) - hW(wx, wz - eW)) / (2 * eW);
-      const il = 1 / Math.hypot(gx, 1, gz);
-      nor.push(-gx * il, il, -gz * il);
-    }
-    const tv = 0.94 + 0.12 * hash2(Math.round(wx), Math.round(wz));
-    col.push(tint.r * tv, tint.g * tv, tint.b * tv);
-    // fold AO from the local height laplacian (concave → darker)
-    const lap = (hLocal(lx + dl, lz) + hLocal(lx - dl, lz) + hLocal(lx, lz + dl) + hLocal(lx, lz - dl)) / 4 - hy;
-    ao.push(yOverride !== undefined ? 1 : 1 - Math.min(1, Math.max(0, lap / (0.02 * h + 0.4))) * 0.42);
-  };
-  push(0, 0);
-  const rings = R + 2;
-  for (let k = 1; k < rings; k++) {
-    const f = k === rings - 1 ? 1.4 : (k / R) * 1.1;
-    for (let sI = 0; sI < S; sI++) {
-      const a = (sI / S) * Math.PI * 2;
-      push(Math.cos(a) * f, Math.sin(a) * f, k === rings - 1 ? -6 : undefined);
-    }
-  }
-  const ring = (k, sI) => 1 + (k - 1) * S + ((sI + S) % S);
-  for (let sI = 0; sI < S; sI++) idx.push(0, ring(1, sI + 1), ring(1, sI));
-  for (let k = 1; k < rings - 1; k++) {
-    for (let sI = 0; sI < S; sI++) {
-      const a = ring(k, sI), b = ring(k, sI + 1), c = ring(k + 1, sI + 1), d = ring(k + 1, sI);
-      idx.push(a, c, d, a, b, c);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.setAttribute('glow', new THREE.Float32BufferAttribute(ao, 1));
-  g.setIndex(idx);
+  const { hLocal, toLocal, toWorld } = islandField(o);
   return {
-    geo: prep(g),
     heightAt: (wx, wz) => { const [lx, lz] = toLocal(wx, wz); return WATER_Y + hLocal(lx, lz); },
     localF: (wx, wz) => { const [lx, lz] = toLocal(wx, wz); return Math.hypot(lx, lz); },
     sample: (rnd, maxF = 0.8) => { const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * maxF; return toWorld(Math.cos(a) * r, Math.sin(a) * r); },
@@ -1355,6 +1242,7 @@ export class Environment {
     // The theme only supplies its look (THEMES[*].marina).
     this._marina = this._stageMarina();
     this._frameId = 0;
+    this._jobs = new Set();   // generator jobs in flight on the env Worker (see ready)
     this.reflections = true;   // marina planar reflections (perf lever; low quality turns them off regardless)
 
     this._initUniforms();
@@ -1366,6 +1254,16 @@ export class Environment {
     this._buildLife();
     scene.fog = new THREE.Fog(this.fogColor, 70, 1500);
     this.setTheme(opts.theme || 'day');
+  }
+
+  // Resolves once every Worker-generated resource (wave texture, foam field, terrain) is in place: await it before
+  // the first frame that shows the sea (boot, stage switch).
+  get ready() { return Promise.all(this._jobs); }
+
+  _job(p) {
+    this._jobs.add(p);
+    p.finally(() => this._jobs.delete(p));
+    return p;
   }
 
   // ------------------------------------------------------------------ uniforms
@@ -1521,7 +1419,7 @@ export class Environment {
 
   // ------------------------------------------------------------------ sea
   _buildSea() {
-    this.U.uWaveTex.value = makeWaveTexture(256, 11);
+    this._job(runJob('waveData', 256, 11).then((d) => { this.U.uWaveTex.value = makeWaveTexture(d, 256); }));
     // polar grid: dense near the arena, stretching to the horizon
     const rings = [0];
     let r = 1.5;
@@ -1548,8 +1446,9 @@ export class Environment {
     this.sea.frustumCulled = false;
     this.sea.receiveShadow = true;
     this.sea.renderOrder = -1;
-    // marina: the planar reflection is rendered right before the sea draws (camera already final for this frame)
-    this.sea.onBeforeRender = (renderer, scene, camera) => this._renderReflection(renderer, scene, camera);
+    // marina: the planar reflection is rendered before the sea draws (camera already final for this frame). The game loop
+    // calls renderReflection() itself before the frame renders; this nested call is the fallback (labs, other loops)
+    this.sea.onBeforeRender = (renderer, scene, camera) => this.renderReflection(renderer, scene, camera);
     this.root.add(this.sea);
   }
 
@@ -1558,7 +1457,10 @@ export class Environment {
   // reflects), rendered without sea or sky dome into a mip-mapped HDR target; alpha = coverage, so the sea shader keeps
   // its analytic sky + clouds wherever nothing stands above the water. Once per frame, only in marina mode, skipped for
   // override passes (GTAO normals) and when the camera dips under the surface. Resolution follows the quality preset.
-  _renderReflection(renderer, scene, camera) {
+  // Call it at the top level, before the frame's own render: nested inside that render (from sea.onBeforeRender) three
+  // gives it a second render state whose lights version never matches, so every lit material drawn in both passes
+  // re-derived its program parameters twice a frame (~0.3–0.6 ms of main-thread time on Halyard).
+  renderReflection(renderer, scene, camera) {
     const U = this.U;
     if (!this._marina || this._reflBusy || scene.overrideMaterial || this._reflFrame === this._frameId) return;
     this._reflFrame = this._frameId;
@@ -1815,40 +1717,22 @@ export class Environment {
     this.root.add(grp);
   }
 
-  // Distance field (metres, 0..range) to pilings, boats, buoys around the deck → foam rings on the water.
-  // Marina mode: finer (0.1 m) and short-range (2.5 m, 1 cm steps), fed by the real waterline contours.
+  // Distance field (metres, 0..range) to pilings, boats, buoys around the deck → foam rings on the water
+  // (envgen.foamField, off the main thread). Marina mode: finer (0.1 m) and short-range (2.5 m, 1 cm steps).
   _buildFoamField(shapes) {
-    const marina = this._marina;
-    const b = this.bounds, pad = 22, res = marina ? 0.1 : 0.2, range = marina ? 2.5 : 8;
-    const minX = b.minX - pad, minZ = b.minZ - pad;
-    const W = Math.ceil((b.maxX - b.minX + pad * 2) / res), H = Math.ceil((b.maxZ - b.minZ + pad * 2) / res);
-    const data = new Uint8Array(W * H).fill(255);
-    const segDist = (px, pz, ax, az, bx, bz) => {
-      const dx = bx - ax, dz = bz - az; const l2 = dx * dx + dz * dz;
-      const t = l2 > 0 ? Math.min(1, Math.max(0, ((px - ax) * dx + (pz - az) * dz) / l2)) : 0;
-      return Math.hypot(px - ax - dx * t, pz - az - dz * t);
-    };
-    for (const s of shapes) {
-      const reach = s.r + (s.reach ?? 3);
-      const x0 = Math.max(0, Math.floor((Math.min(s.ax, s.bx) - reach - minX) / res)), x1 = Math.min(W - 1, Math.ceil((Math.max(s.ax, s.bx) + reach - minX) / res));
-      const z0 = Math.max(0, Math.floor((Math.min(s.az, s.bz) - reach - minZ) / res)), z1 = Math.min(H - 1, Math.ceil((Math.max(s.az, s.bz) + reach - minZ) / res));
-      for (let j = z0; j <= z1; j++) for (let i = x0; i <= x1; i++) {
-        const px = minX + (i + 0.5) * res, pz = minZ + (j + 0.5) * res;
-        const d = Math.max(0, segDist(px, pz, s.ax, s.az, s.bx, s.bz) - s.r);
-        const v = Math.min(255, Math.round((d / range) * 255));
-        const k = j * W + i;
-        if (v < data[k]) data[k] = v;
-      }
-    }
-    const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat, THREE.UnsignedByteType);
-    tex.unpackAlignment = 1;
-    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
-    tex.colorSpace = THREE.NoColorSpace;
-    tex.needsUpdate = true;
-    if (this.U.uFoamTex.value) this.U.uFoamTex.value.dispose();
-    this.U.uFoamTex.value = tex;
-    this.U.uFoamRect.value.set(minX, minZ, 1 / (W * res), 1 / (H * res));
-    this.U.uMarinaK.value.w = range;
+    const id = (this._foamId = (this._foamId || 0) + 1);
+    this.U.uMarinaK.value.w = this._marina ? 2.5 : 8;
+    this._job(runJob('foamField', shapes, this.bounds, this._marina).then(({ data, W, H, minX, minZ, res }) => {
+      if (id !== this._foamId) return;   // a newer stage / mode asked for another field meanwhile
+      const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.unpackAlignment = 1;
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+      tex.colorSpace = THREE.NoColorSpace;
+      tex.needsUpdate = true;
+      if (this.U.uFoamTex.value) this.U.uFoamTex.value.dispose();
+      this.U.uFoamTex.value = tex;
+      this.U.uFoamRect.value.set(minX, minZ, 1 / (W * res), 1 / (H * res));
+    }));
   }
 
   // Marina: where anything the stage dressed (piles, fenders, ladders, moored boats, buoys…) crosses the sea surface.
@@ -2131,7 +2015,7 @@ export class Environment {
     const rnd = mulberry(42);
     const islands = [];
     const terrainParts = [];
-    const addIsland = (o) => { const isl = makeIsland(o); terrainParts.push(isl.geo); islands.push({ ...o, isl }); return isl; };
+    const addIsland = (o) => { const isl = makeIsland(o); terrainParts.push({ ...o, tint: new THREE.Color(o.grass || '#9ccf7f').toArray() }); islands.push({ ...o, isl }); return isl; };
 
     // --- city land across the bay (east / north-east) + backdrop hills ---
     const [ccx, ccz] = polar(22, 900);
@@ -2209,10 +2093,18 @@ export class Environment {
     }
 
     const terrainMat = patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }), U, { terrain: true, shore: true });
-    this.terrain = new THREE.Mesh(mergeGeometries(terrainParts), terrainMat);
+    this.terrain = new THREE.Mesh(new THREE.BufferGeometry(), terrainMat);
     this.terrain.name = 'Terrain';
     this.terrain.frustumCulled = false;
     this.root.add(this.terrain);
+    this._job(runJob('islandMesh', terrainParts).then((m) => {
+      const g = this.terrain.geometry;
+      g.setAttribute('position', new THREE.BufferAttribute(m.position, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(m.normal, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(m.color, 3));
+      g.setAttribute('glow', new THREE.BufferAttribute(m.glow, 1));
+      if (this.U.uFarOn.value) this._bakeFarReflection();   // the far-land cube was baked without it
+    }));
     this.staticScenery = new THREE.Mesh(mergeGeometries(staticParts), shoreMat);
     this.staticScenery.name = 'FarScenery';
     this.staticScenery.frustumCulled = false;

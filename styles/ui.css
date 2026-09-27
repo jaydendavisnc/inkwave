@@ -116,6 +116,8 @@
 .iw-cursor__ring { position: absolute; inset: 0; border-radius: inherit; border: 3px solid #fff;
   box-shadow: 0 0 0 3px var(--k), 0 0 0 6px rgba(var(--a-rgb), .6), 0 0 calc(var(--u) * 1.8) rgba(var(--a-rgb), .55);
   animation: iw-cursor-pulse 1.3s ease-in-out infinite; }
+/* the pulse animates box-shadow (a repaint per frame): hold it while the cursor is hidden, e.g. all through a match */
+.iw-cursor:not(.is-on) .iw-cursor__ring { animation-play-state: paused; }
 .iw-cursor__glow { position: absolute; inset: -3px; border-radius: inherit; background:
   linear-gradient(90deg, #fff 0 14px, transparent 14px) top left / 50% 3px no-repeat,
   linear-gradient(270deg, #fff 0 14px, transparent 14px) bottom right / 50% 3px no-repeat; opacity: 0; }
@@ -283,7 +285,8 @@
   box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--k), 0 calc(var(--u) * .45) 0 6px rgba(0, 0, 0, .4), inset 0 3px 6px rgba(0, 0, 0, .5); }
 .iw-progress__fill { position: absolute; inset: 0; border-radius: 999px; transform: translateX(-100%); will-change: transform;
   background: linear-gradient(180deg, var(--a-light) 0%, var(--a) 40%, var(--a-dark) 100%); }
-.iw-progress__wave { position: absolute; inset: 0; border-radius: inherit; background: repeating-linear-gradient(115deg, rgba(255, 255, 255, .22) 0 10px, transparent 10px 22px); animation: iw-stripes .7s linear infinite; }
+.iw-progress__wave { position: absolute; inset: 0; border-radius: inherit; animation: iw-stripes .7s linear infinite;
+  background: repeating-linear-gradient(115deg, rgba(255, 255, 255, .22) 0 calc(24px * sin(115deg) * 10 / 22), transparent 0 calc(24px * sin(115deg))) 0 0 / 24px 100%; }
 .iw-progress__edge { position: absolute; left: calc(var(--u) * .8); right: calc(var(--u) * .8); top: 18%; height: 20%; border-radius: 999px; background: rgba(255, 255, 255, .45); }
 .iw-progress__pct { min-width: 4ch; font: 400 calc(var(--u) * 1.9) / 1 'Titan One', sans-serif; -webkit-text-stroke: .16em var(--k); paint-order: stroke fill; }
 .iw-loading__label { font: 700 var(--fs-m) / 1 'Rubik', sans-serif; letter-spacing: .06em; color: rgba(255, 255, 255, .8); text-transform: uppercase; }

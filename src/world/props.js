@@ -3130,6 +3130,10 @@ export class PropKit {
       clothDepth: clothDepthMaterial(this.uTime),
     };
     this.mat.fence.alphaToCoverage = true;
+    // the instanced spinners get their own copies: a material drawn on both instanced and plain meshes makes three.js
+    // swap its program at every switch (four times a frame with the merged props)
+    this.mat.paintInst = this.mat.paint.clone();
+    this.mat.metalInst = this.mat.metal.clone();
   }
 
   _push(mat, part) { let a = this._buckets.get(mat); if (!a) { a = []; this._buckets.set(mat, a); } a.push(part); }
@@ -3189,7 +3193,7 @@ export class PropKit {
     for (const r of this._spin) (kinds[r.kind] ||= []).push(r);
     for (const kind in kinds) {
       const recs = kinds[kind];
-      const mesh = new THREE.InstancedMesh(this._tplGeo(kind), kind === 'fan' ? this.mat.paint : this.mat.metal, recs.length);
+      const mesh = new THREE.InstancedMesh(this._tplGeo(kind), kind === 'fan' ? this.mat.paintInst : this.mat.metalInst, recs.length);
       recs.forEach((r, i) => mesh.setMatrixAt(i, r.base));
       mesh.castShadow = this.castShadow; mesh.receiveShadow = true; mesh.frustumCulled = false; mesh.name = 'props:spin:' + kind;
       mesh.userData = { recs, axis: kind === 'fan' ? 'z' : 'y' };

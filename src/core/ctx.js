@@ -31,9 +31,6 @@ export const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1
 export function angleDiff(a, b) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; }
 export function dampAngle(a, b, lambda, dt) { return a + angleDiff(a, b) * (1 - Math.exp(-lambda * dt)); }
 
-// Deterministic hash → [0,1)
-export function hash1(n) { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453123; return s - Math.floor(s); }
-
 // Seeded RNG (mulberry32)
 export function rng(seed) {
   let a = seed >>> 0;

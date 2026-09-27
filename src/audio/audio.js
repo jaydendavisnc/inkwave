@@ -18,7 +18,7 @@
 
 import { DEFAULT_SETTINGS } from '../config.js';
 import {
-  V, music as musicSingleton, makeImpulse, mulberry32, mtof, perc, ahr, adsr, pts, sweep, strokeWave, pulseWave,
+  V, music as musicSingleton, makeImpulse, mulberry32, mtof, ahr, adsr, pts, sweep, strokeWave, pulseWave,
   kick, snare, crash, tom, brass, bell, pad, bass,
 } from './music.js';
 
@@ -44,9 +44,17 @@ export function texture(ctx, kind) {
   if (!m) { m = new Map(); texCache.set(ctx, m); }
   let buf = m.get(kind);
   if (buf) return buf;
-  const s = TEX[kind], sr = ctx.sampleRate, len = Math.floor(s.dur * sr);
-  buf = ctx.createBuffer(1, len, sr);
-  const d = buf.getChannelData(0);
+  const d = grainSamples(kind, ctx.sampleRate);
+  buf = ctx.createBuffer(1, d.length, ctx.sampleRate);
+  buf.copyToChannel(d, 0);
+  m.set(kind, buf);
+  return buf;
+}
+
+// Pure sample generator behind texture() (also run off the main thread: AudioEngine._warm).
+export function grainSamples(kind, sr) {
+  const s = TEX[kind], len = Math.floor(s.dur * sr);
+  const d = new Float32Array(len);
   let seed = 0;
   for (const c of kind) seed = (seed * 31 + c.charCodeAt(0)) | 0;
   const rnd = mulberry32(seed);
@@ -74,8 +82,7 @@ export function texture(ctx, kind) {
   for (let i = 0; i < len; i++) { d[i] -= mean; ss += d[i] * d[i]; pk = Math.max(pk, Math.abs(d[i])); }
   const g = Math.min(0.25 / Math.sqrt(ss / len || 1), 0.95 / (pk || 1));
   for (let i = 0; i < len; i++) d[i] *= g;
-  m.set(kind, buf);
-  return buf;
+  return d;
 }
 
 /* ------------------------------------------------------------------------------------------------------------
@@ -154,11 +161,21 @@ export class AudioEngine {
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (!document.hidden) h(); });
   }
 
-  // pre-render grain textures in idle slices so the first swim/roll doesn't hitch
+  // pre-render grain textures on another core (each is 100–200 ms of JS: on the main thread that's a hitch per kind,
+  // right as a match starts); anything not back yet is rendered on demand by texture()
   _warm() {
-    const kinds = Object.keys(TEX);
-    const step = () => { const k = kinds.shift(); if (!k || !this.ctx) return; texture(this.ctx, k); setTimeout(step, 40); };
-    setTimeout(step, 60);
+    const ctx = this.ctx;
+    let w;
+    try { w = new Worker(import.meta.url, { type: 'module' }); } catch { return; }   // this module (see its end)
+    let left = 0;
+    w.onmessage = ({ data: { kind, d } }) => {
+      let m = texCache.get(ctx);
+      if (!m) { m = new Map(); texCache.set(ctx, m); }
+      if (!m.has(kind)) { const buf = ctx.createBuffer(1, d.length, ctx.sampleRate); buf.copyToChannel(d, 0); m.set(kind, buf); }
+      if (--left === 0) w.terminate();
+    };
+    w.onerror = () => w.terminate();
+    for (const kind of Object.keys(TEX)) { left++; w.postMessage({ kind, sr: ctx.sampleRate }); }
   }
 
   setVolumes(v = {}) {
@@ -1294,3 +1311,11 @@ export const LOOP_NAMES = SFX_NAMES.filter((n) => SFX[n] && SFX[n].loop);
 
 export const audio = new AudioEngine();
 export { musicSingleton as music };
+
+// Loaded as a module Worker by AudioEngine._warm: renders grain textures off the main thread.
+if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
+  self.onmessage = ({ data: { kind, sr } }) => {
+    const d = grainSamples(kind, sr);
+    self.postMessage({ kind, d }, [d.buffer]);
+  };
+}

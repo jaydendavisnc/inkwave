@@ -99,63 +99,6 @@ export class Physics {
     return out;
   }
 
-  // Resolve a vertical capsule (feet at pos) against the level. Mutates pos. Fills contact info in `c`.
-  // squid = true: grates don't collide (squids slip through the mesh)
-  collideCapsule(pos, radius, height, c, iterations = 3, squid = false) {
-    c.ground = false; c.wall = false; c.ceiling = false;
-    c.groundNormal.set(0, 1, 0); c.wallNormal.set(0, 0, 0); c.groundBlock = -1; c.wallBlock = -1;
-    const blocks = this.level.blocks;
-    const top = Math.max(radius, height - radius);
-    for (let it = 0; it < iterations; it++) {
-      const ids = this.level.queryBlocks(pos.x - radius - 0.2, pos.z - radius - 0.2, pos.x + radius + 0.2, pos.z + radius + 0.2, this._ids);
-      let moved = false;
-      for (let i = 0; i < ids.length; i++) {
-        const b = blocks[ids[i]];
-        if (!b.solid || (squid && b.grate)) continue;
-        if (pos.y + height < b.aabbMin.y - 0.05 || pos.y > b.aabbMax.y + 0.05) continue;
-        _a.set(pos.x, pos.y + radius, pos.z);
-        _b.set(pos.x, pos.y + top, pos.z);
-        _ab.copy(_b).sub(_a);
-        const abLen2 = Math.max(1e-6, _ab.lengthSq());
-        let t = 0.5;
-        for (let k = 0; k < 3; k++) {
-          _s.copy(_a).addScaledVector(_ab, t);
-          this.closestOnBlock(b, _s, _q);
-          t = Math.min(1, Math.max(0, ((_q.x - _a.x) * _ab.x + (_q.y - _a.y) * _ab.y + (_q.z - _a.z) * _ab.z) / abLen2));
-        }
-        _s.copy(_a).addScaledVector(_ab, t);
-        this.closestOnBlock(b, _s, _q);
-        _n.copy(_s).sub(_q);
-        let dist = _n.length();
-        let pen;
-        if (dist > 1e-5) {
-          if (dist >= radius) continue;
-          _n.multiplyScalar(1 / dist);
-          pen = radius - dist;
-        } else {
-          // segment point inside the box: push out along the axis of least penetration
-          _o.copy(_s).sub(b.center);
-          let bestPen = Infinity;
-          for (let k = 0; k < 3; k++) {
-            const ax = b.axes[k], h = k === 0 ? b.half.x : k === 1 ? b.half.y : b.half.z;
-            const d = _o.dot(ax);
-            const pk = h - Math.abs(d);
-            if (pk < bestPen) { bestPen = pk; _n.copy(ax).multiplyScalar(d >= 0 ? 1 : -1); }
-          }
-          pen = bestPen + radius;
-        }
-        // prefer resolving as ground when standing on top edges (avoid being shoved sideways off ledges)
-        pos.addScaledVector(_n, pen + 1e-4);
-        moved = true;
-        if (_n.y > 0.6) { c.ground = true; c.groundNormal.copy(_n); c.groundBlock = b.id; }
-        else if (_n.y < -0.6) c.ceiling = true;
-        else if (Math.abs(_n.y) < 0.55) { c.wall = true; c.wallNormal.copy(_n); c.wallBlock = b.id; }
-      }
-      if (!moved) break;
-    }
-    return c;
-  }
-
   // Flat-footprint ground probe — the character's feet. Vertical rays at the centre and on a ring of radius `foot`
   // cast from `up` above the feet (y) to `down` below them. The centre surface wins when it is walkable and in range,
   // so slopes are exact (no hovering, no sphere-on-plane bounce); ring samples take over when the centre is over a
@@ -251,28 +194,6 @@ export class Physics {
       if (!moved) break;
     }
     return c;
-  }
-
-  // Would a body capsule (same shape as collideBody) at `pos` overlap solid geometry? (step-up / ledge checks)
-  bodyFits(pos, radius, lift, height, skipGrates = false, margin = 0.01) {
-    const blocks = this.level.blocks;
-    const bot = lift + radius, top = Math.max(bot, height - radius);
-    const ids = this.level.queryBlocks(pos.x - radius - 0.1, pos.z - radius - 0.1, pos.x + radius + 0.1, pos.z + radius + 0.1, this._ids);
-    for (let i = 0; i < ids.length; i++) {
-      const b = blocks[ids[i]];
-      if (!b.solid || (skipGrates && b.grate)) continue;
-      if (pos.y + height < b.aabbMin.y || pos.y + lift > b.aabbMax.y) continue;
-      _a.set(pos.x, pos.y + bot, pos.z); _b.set(pos.x, pos.y + top, pos.z); _ab.copy(_b).sub(_a);
-      const abLen2 = Math.max(1e-6, _ab.lengthSq());
-      let t = 0.5;
-      for (let k = 0; k < 3; k++) {
-        _s.copy(_a).addScaledVector(_ab, t); this.closestOnBlock(b, _s, _q);
-        t = Math.min(1, Math.max(0, ((_q.x - _a.x) * _ab.x + (_q.y - _a.y) * _ab.y + (_q.z - _a.z) * _ab.z) / abLen2));
-      }
-      _s.copy(_a).addScaledVector(_ab, t); this.closestOnBlock(b, _s, _q);
-      if (_s.distanceToSquared(_q) < (radius - margin) * (radius - margin)) return false;
-    }
-    return true;
   }
 
   // Soft camera probe ("sphere-cast feel"): a cylinder of rays parallel to the boom — the centre plus two rings

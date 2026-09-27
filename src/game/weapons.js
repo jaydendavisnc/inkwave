@@ -919,6 +919,16 @@ export class Projectiles {
     for (const [team, m] of this.bombMatCache) { m.color.copy(G.teamColors[team]); m.emissive.copy(G.teamColors[team]); }
   }
 
+  // Invisible stand-ins for the materials bombs / storm clouds create at first use, so boot can precompile them.
+  warmMeshes() {
+    const m = (geo, mat) => new THREE.Mesh(geo, mat);
+    return [
+      m(this.bombGeo, this._bombMat(0)),
+      m(this.bombCapGeo, new THREE.MeshStandardMaterial({ metalness: 0.6 })),
+      m(this.cloudGeo, new THREE.MeshStandardMaterial({ transparent: true })),
+    ];
+  }
+
   throwVelocity(a, speed, out) {
     const pitch = clamp(a.aimPitch + 0.28, -0.3, 1.1);
     const cp = Math.cos(pitch);

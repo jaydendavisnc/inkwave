@@ -2247,8 +2247,6 @@ export class FX {
     if (o.ground) L.ground.copy(o.ground);
     if (sc) this._moteU.uCol.value.copy(sc).lerp(_white, 0.35).multiplyScalar(0.9);
   }
-  setSunDir(v) { this._light.sunDir.copy(v).normalize(); }
-
   stats() {
     return { drops: this.dN, puffs: this.puffs.n, glows: this.glows.n, rings: this.rings.n, shells: this.shells.n, beams: this.beams.n, checks: this._checks, sched: this._sqN, caps: { drops: this.dCap, puffs: this.puffs.cap, glows: this.glows.cap, rings: this.rings.cap } };
   }
