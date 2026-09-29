@@ -4,13 +4,13 @@
   "description": "An original Splatoon-style 4v4 turf-war shooter for the browser, built on three.js.",
   "scripts": {
     "start": "python3 tools/serve.py 8490",
-    "relay": "cd server && wrangler dev --ip 0.0.0.0 --port 8787",
+    "dev": "python3 tools/build-dist.py && wrangler dev --ip 0.0.0.0 --port 8787",
+    "relay": "python3 tools/build-dist.py && wrangler dev --ip 0.0.0.0 --port 8787",
     "check": "for f in $(find src tools server/src -name '*.js' -o -name '*.mjs'); do node --check \"$f\" || exit 1; done && echo 'syntax ok'",
     "smoke": "./tools/smoke.sh",
     "net-test": "node tools/net-test.mjs",
     "build": "python3 tools/build-dist.py",
-    "release": "./tools/release-pages.sh",
-    "deploy-relay": "cd server && wrangler deploy"
+    "release": "./tools/release.sh"
   },
   "keywords": [
     "game",
@@ -31,7 +31,7 @@
     "puppeteer-core": "^25.12.0",
     "wrangler": "^4.141.0"
   },
-  "homepage": "https://inkwave-aah.pages.dev",
+  "homepage": "https://inkwave.inkwave.workers.dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/jaydendavisnc/inkwave.git"

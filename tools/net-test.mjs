@@ -2,7 +2,7 @@
 // players would notice is measured — does everyone see the same match, and do other players move smoothly?
 //
 // usage: node tools/net-test.mjs [--clients 2] [--secs 24] [--map tidewater] [--time day] [--full] [--shots dir]
-//   needs the game on :8490 (npm start) and the relay on :8787 (cd server && npx wrangler dev --port 8787)
+//   needs the game on :8490 (npm start) and the relay on :8787 (npm run relay)
 //   --full   play the whole (60 s) match through the results and back to the lobby
 //   --mode boss   Boss Battle: everyone one squad vs HULLBREAKER; adds the boss checks (same path / clock / HP /
 //            moves on every screen, guest hits reaching the host, boss damage landing on each owner's squidkid,

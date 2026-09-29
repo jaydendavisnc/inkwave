@@ -33,6 +33,8 @@ Keep pull requests focused. If you change gameplay tuning, say what you measured
 | `src/ui` | menus, HUD, map diorama, icons |
 | `src/audio` | procedural sound effects and music |
 | `docs` | event contract, module contracts, character rig reference |
+| `server` | room relay. Same Worker as the site; `wrangler.jsonc` at the repo root |
+| `public` | built static site (`npm run build`). The Worker's asset directory; do not edit |
 | `tools` | dev server, labs, headless capture and measurement scripts, release |
 
 ## Code style

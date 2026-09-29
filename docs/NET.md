@@ -6,7 +6,7 @@ own squidkid locally (instant controls) and streams it to the others, who render
 as a local character, interpolated ~100 ms behind. Ink is replicated splat-for-splat from whoever painted it, so every
 screen shows the same turf.
 
-Transport: one WebSocket per player to a Cloudflare Durable Object relay (`server/`), one room object per code.
+Transport: one WebSocket per player to a Cloudflare Durable Object relay (`server/`), one room object per code. The site and the relay are the same Worker, so the published page opens the relative path `/room/…` (the browser supplies `wss:` or `ws:`). A local static page falls back to `ws://<host>:8787`; `?relay=` overrides it.
 
 ## `G.net` — the session (src/net/session.js)
 
@@ -87,7 +87,7 @@ result on every screen.
 match running) and blind fan-out of `b|` / `s|to|` payloads. Clients send `"ping"` every 2 s, answered by the runtime
 without waking the room; a sweep drops sockets silent for 10 s during a match (150 s in the lobby).
 
-**Testing.** `node tools/net-test.mjs` (game on :8490, `cd server && npx wrangler dev --port 8787`) plays real headless
+**Testing.** `node tools/net-test.mjs` (game on :8490, `npm run relay` for the Worker on :8787) plays real headless
 clients against the local relay and reports consistency (clock, coverage, rosters, results) and what is drawn:
 per-frame "kink" and path error of every remote squidkid against its owner's own frames.
 `--clients 3 --leave host --drop kill|freeze` tests migration, `--full` plays through results back to the lobby,

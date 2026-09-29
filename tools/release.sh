@@ -1,6 +1,8 @@
 #!/bin/sh
-# Rebuild dist/ and deploy it to the Vercel project "inkwave" (production). Only run when asked to deploy.
+# Build public/ and publish the Worker (static site + room relay, one deploy).
+# Needs a one-time `npx wrangler login`. Only run when asked to deploy.
+# usage: tools/release.sh
 set -e
 cd "$(dirname "$0")/.."
 python3 tools/build-dist.py
-cd dist && vercel deploy --prod --yes
+npx wrangler deploy

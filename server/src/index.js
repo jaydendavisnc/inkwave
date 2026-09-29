@@ -1,5 +1,6 @@
 // INKWAVE online relay (Cloudflare Worker + Durable Object).
 //
+// This Worker is the whole origin. Static files come from public/ (the assets binding). These paths are the relay:
 //   GET /room/<CODE>?name=<name>&create=1&v=<proto>   (WebSocket upgrade) → the Room object for that code
 //   GET /health                                          → "ok"
 //
@@ -17,10 +18,16 @@
 import { DurableObject } from 'cloudflare:workers';
 
 const PROTO = 1, MAX = 8;
-// Public relay hygiene: only the game's own site may open rooms (plus local dev), each socket gets a message budget
-// (the game sends ~25/s; a runaway or hostile client is cut off before it can eat the account's quota) and a size cap.
-const ORIGIN_OK = (o) => /^https:\/\/([a-z0-9-]+\.)?inkwave-aah\.pages\.dev$/.test(o)
-  || /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[a-z0-9-]+\.local)(:\d+)?$/.test(o);   // dev + LAN play
+// Public relay hygiene: only this game may open rooms. The page is usually served by this same Worker (workers.dev,
+// a custom domain, or `wrangler dev`), so its Origin host matches the request. The Pages site and a local/LAN static
+// server are the other origins that are still this game. Each socket also gets a message budget (the game sends
+// ~25/s; a runaway or hostile client is cut off before it can eat the account's quota) and a size cap.
+const PAGES_ORIGIN = /^https:\/\/([a-z0-9-]+\.)?inkwave-aah\.pages\.dev$/;
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[a-z0-9-]+\.local)(:\d+)?$/;
+const originOk = (origin, reqUrl) => {
+  if (PAGES_ORIGIN.test(origin) || LOCAL_ORIGIN.test(origin)) return true;
+  try { return !!origin && new URL(origin).host === new URL(reqUrl).host; } catch { return false; }
+};
 const MSG_MAX = 65536, RATE = 90, BURST_STRIKES = 4;
 // A socket whose "ping"s stop is a player whose connection died without closing (Wi-Fi gone, laptop lid shut): drop
 // them so their squidkid is handed to a bot instead of standing frozen. Clients ping every 2 s; a hidden tab still
@@ -33,11 +40,11 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === '/health') return new Response('ok', { headers: { 'access-control-allow-origin': '*' } });
     const m = url.pathname.match(/^\/room\/([A-Za-z0-9]+)$/);
-    if (!m) return new Response('INKWAVE relay', { status: 404 });
+    if (!m) return env.ASSETS.fetch(req);
     const code = m[1].toUpperCase();
     if (!CODE.test(code)) return new Response('bad code', { status: 400 });
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
-    if (!ORIGIN_OK(req.headers.get('Origin') || '')) return new Response('forbidden', { status: 403 });
+    if (!originOk(req.headers.get('Origin') || '', req.url)) return new Response('forbidden', { status: 403 });
     return env.ROOMS.get(env.ROOMS.idFromName(code)).fetch(req);
   },
 };

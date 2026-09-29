@@ -10,9 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://inkwave-aah.pages.dev"><b>▶ Play now</b></a> ·
+  <a href="https://inkwave.inkwave.workers.dev"><b>▶ Play now</b></a> ·
   <a href="#controls">Controls</a> ·
   <a href="#playing-online">Online</a> ·
+  <a href="#deployment">Deploy</a> ·
   <a href="#running-locally">Run locally</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -66,19 +67,21 @@ From the main menu choose **Online**, then **Create a room** and send your frien
 type theirs). The host picks the stage, time of day, match length and whether bots fill empty slots; everyone else
 picks a team, weapon and look and readies up. The lineup, emotes and ready state are live for everyone in the room.
 
-Rooms run on a tiny relay (a Cloudflare Worker with one Durable Object per room, in [`server/`](server)). It only
-forwards messages: every player simulates their own squidkid and streams it, and everyone else draws it through the
-same animation system on a smoothed timeline about a tenth of a second behind. How that works, and the tools used to
-measure it, are in [`docs/NET.md`](docs/NET.md).
+Rooms run on the same Cloudflare Worker that serves the site ([`server/`](server), one Durable Object per room). The published page opens that socket on the relative path `/room/…`; the browser turns it into `wss://` or `ws://` on whatever host served the page. The Worker only forwards messages: every player simulates their own squidkid and streams it, and everyone else draws it through the same animation system on a smoothed timeline about a tenth of a second behind. How that works, and the tools used to measure it, are in [`docs/NET.md`](docs/NET.md).
 
-To play online on your own network, run the relay next to the game:
+## Deployment
+
+The site and the rooms go out as one Cloudflare Worker named `inkwave` ([`wrangler.jsonc`](wrangler.jsonc)). `npm run build` assembles gitignored `public/` — the game files plus only the three.js addons they import. [`server/src/index.js`](server/src/index.js) handles `/room/*` and `/health` on that same origin, and those paths run the Worker ahead of static assets, so a file cannot take the place of a room. Each room is one Durable Object (`Room`, SQLite migration `v1`).
 
 ```bash
-npm install      # once: the relay runs on wrangler
-npm run relay    # ws://<this machine>:8787
+npm install
+npx wrangler login     # once
+npm run release        # build public/, then wrangler deploy
 ```
 
-A page opened from `localhost` or a LAN address uses that relay automatically; `?relay=wss://…` points it anywhere else.
+That serves the game at <https://inkwave.inkwave.workers.dev>. `npm run dev` builds `public/` and serves the same shape at <http://localhost:8787>.
+
+On that origin the room socket is the relative path `/room/<code>`. It follows the host that served the page, including a custom domain attached to this Worker, with `https` becoming `wss` and `http` becoming `ws`. Absolute addresses stay as fallbacks: a local or LAN page on any port other than 8787 uses `ws://<that host>:8787`, and `?relay=wss://…` points the socket somewhere else. `GET /health` answers `ok`.
 
 ## Running locally
 
@@ -90,13 +93,22 @@ cd inkwave
 npm start        # http://localhost:8490
 ```
 
+While editing, that static server is faster (no rebuild) and has no sockets. Run the relay beside it:
+
+```bash
+npm start           # http://localhost:8490
+npm run relay       # ws://<this machine>:8787
+```
+
+A page opened from `localhost` or a LAN address on any port other than 8787 uses that absolute relay. The published site, and `npm run dev` on port 8787, keep the relative `/room/…` path. See [Deployment](#deployment).
+
 Useful URL parameters: `?map=halyard&time=dusk` picks a stage, `&autostart=180` skips the menus into a 180 s match, `&autopilot` lets a bot drive you.
 
 ```bash
 npm install      # once, for the headless tools
 npm run check    # syntax-check every module
 npm run smoke    # boot + 8 s of autopilot in headless Chrome, fails on console errors
-npm run build    # assemble dist/ (game + only the three.js addons it imports)
+npm run build    # assemble public/ (the Worker's static files: game + only the three.js addons it imports)
 ```
 
 With the relay running, `npm run net-test` plays a real match between headless clients and reports what each

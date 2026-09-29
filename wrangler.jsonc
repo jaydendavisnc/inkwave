@@ -1,0 +1,18 @@
+{
+  // One Worker for the whole game. public/ is the static site (npm run build);
+  // server/src/index.js handles /room and /health on this same origin.
+  // Asset routes stay on the asset server. /room and /health always enter the Worker,
+  // so a file can never shadow the relay.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "inkwave",
+  "main": "server/src/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/room/*", "/health"]
+  },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "observability": { "enabled": false }
+}

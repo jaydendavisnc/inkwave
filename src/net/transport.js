@@ -4,15 +4,17 @@
 
 export const PROTO = 1;
 
-// Where the relay lives: ?relay=… wins; a page served from this machine or the LAN talks to a local `wrangler dev`
-// relay on :8787; the public site talks to the deployed Worker.
-export const PROD_RELAY = 'wss://inkwave-net.inkwave.workers.dev';
+// Where the relay lives. ?relay=… wins (an absolute URL, the override). The deployed site and `wrangler dev` are this
+// page's own origin: one Worker serves the files and the rooms, so the socket is the relative path `/room/…` and the
+// browser picks ws or wss from the page. `npm start` is a static server with no sockets, so a local or LAN page on
+// any port other than 8787 falls back to the absolute sidecar address ws://<host>:8787.
 export function relayURL() {
   const q = new URLSearchParams(location.search).get('relay');
   if (q) return q.replace(/\/$/, '');
   const h = location.hostname;
   const local = h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(h) || h.endsWith('.local');
-  return local ? `ws://${h}:8787` : PROD_RELAY;
+  if (local && location.port !== '8787') return `ws://${h}:8787`;
+  return '';
 }
 
 // Debug: simulate a real connection on localhost — ?netlag=ms (extra one-way delay on everything received),
