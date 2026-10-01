@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { registerMarinaVessels } from './props-marina-vessels.js';
 import { registerMarinaDock } from './props-marina-dock.js';
+import { registerPods } from './props-pods.js';
 import { STAGES } from './stages/index.js';
 
 const PI = Math.PI, TAU = PI * 2, HP = PI / 2;
@@ -1205,6 +1206,133 @@ function roundPoly(pts, r, k = 3) {
 // ------------------------------------------------------------------------------------------------ prop definitions
 const D = {};
 const P3 = (x, y, z) => [x, y, z];
+
+// ------------------------------------------------------------------------------------------------ inflatable cover
+// The body colour: the hue halfway round the colour wheel on the side away from both team inks (so it never reads as
+// either team: orange vs blue → green), a soft vinyl tone.
+const _hA = { h: 0, s: 0, l: 0 }, _hB = { h: 0, s: 0, l: 0 };
+function inflatableNeutral(ca, cb) {
+  ca.getHSL(_hA); cb.getHSL(_hB);
+  let h = (_hA.h + _hB.h) / 2;
+  if (Math.abs(_hA.h - _hB.h) < 0.5) h = (h + 0.5) % 1;
+  // (picked in sRGB: a soft vinyl tone like the reference, not a neon)
+  return new THREE.Color().setHSL(h, 0.52, 0.6, THREE.SRGBColorSpace);
+}
+// the emblem: a white squid under a rising arrow, navy outline (an original mark)
+function drawInflatableLogo(x, w, h) {
+  x.clearRect(0, 0, w, h);
+  x.lineJoin = 'round'; x.lineCap = 'round';
+  const K = '#26284a';
+  const squid = () => {
+    x.beginPath();
+    x.moveTo(128, 98); x.bezierCurveTo(168, 118, 184, 150, 176, 176); x.lineTo(80, 176); x.bezierCurveTo(72, 150, 88, 118, 128, 98); x.closePath();
+    for (const cx of [92, 116, 140, 164]) { x.moveTo(cx - 9, 174); x.lineTo(cx - 6, 218); x.quadraticCurveTo(cx, 226, cx + 6, 218); x.lineTo(cx + 9, 174); }
+  };
+  const arrow = () => {
+    x.beginPath();
+    x.moveTo(62, 150); x.lineTo(150, 62); x.lineTo(128, 62); x.lineTo(128, 40); x.lineTo(196, 40); x.lineTo(196, 108); x.lineTo(174, 108); x.lineTo(174, 86); x.lineTo(86, 174); x.closePath();
+  };
+  x.fillStyle = '#fff'; x.strokeStyle = K; x.lineWidth = 16;
+  arrow(); x.stroke(); x.fill();
+  squid(); x.stroke(); x.fill();
+  x.fillStyle = K;
+  for (const ex of [108, 148]) { x.beginPath(); x.ellipse(ex, 150, 10, 13, 0, 0, Math.PI * 2); x.fill(); }
+}
+// a rounded rectangle's outline (half extents a × b, corner radius r ≤ min(a, b)), n points evenly spaced along it,
+// starting on +x, counter-clockwise seen from above
+function rrectRing(a, b, r, n, out) {
+  const sx = a - r, sz = b - r, qa = (Math.PI / 2) * r;
+  const L = 4 * (sx + sz) + 4 * qa;
+  out.length = 0;
+  for (let i = 0; i < n; i++) {
+    let t = (i / n) * L;
+    // walk: +x side (up in z), corner, +z side, corner, −x side, corner, −z side, corner
+    const segs = [2 * sz, qa, 2 * sx, qa, 2 * sz, qa, 2 * sx, qa];
+    let k = 0;
+    while (k < 7 && t > segs[k]) { t -= segs[k]; k++; }
+    let x, z;
+    switch (k) {
+      case 0: x = a; z = -sz + t; break;
+      case 1: { const q = r > 1e-6 ? t / r : 0; x = sx + r * Math.cos(q); z = sz + r * Math.sin(q); break; }
+      case 2: x = sx - t; z = b; break;
+      case 3: { const q = Math.PI / 2 + (r > 1e-6 ? t / r : 0); x = -sx + r * Math.cos(q); z = sz + r * Math.sin(q); break; }
+      case 4: x = -a; z = sz - t; break;
+      case 5: { const q = Math.PI + (r > 1e-6 ? t / r : 0); x = -sx + r * Math.cos(q); z = -sz + r * Math.sin(q); break; }
+      case 6: x = -sx + t; z = -b; break;
+      default: { const q = 1.5 * Math.PI + (r > 1e-6 ? t / r : 0); x = sx + r * Math.cos(q); z = -sz + r * Math.sin(q); }
+    }
+    out.push([x, z]);
+  }
+  return out;
+}
+// a rounded-rect "tube" through the given rings [{ y, inset }] (inset > 0 = pulled in, < 0 = bulging out), closed with a
+// domed fan on top (dome m) when `top`; position / normal / uv like the other prop geometry
+function inflatableShell(a, b, r, rings, top = 0, n = 64) {
+  const pos = [], idx = [], ring = [];
+  for (const { y, inset } of rings) {
+    const aa = Math.max(0.02, a - inset), bb = Math.max(0.02, b - inset), rr = Math.min(Math.max(0.001, r - inset), aa, bb);
+    rrectRing(aa, bb, rr, n, ring);
+    for (const [x, z] of ring) pos.push(x, y, z);
+  }
+  for (let j = 0; j < rings.length - 1; j++) for (let i = 0; i < n; i++) {
+    const i1 = (i + 1) % n, A = j * n + i, B = j * n + i1, C = (j + 1) * n + i, D = (j + 1) * n + i1;
+    idx.push(A, C, B, B, C, D);
+  }
+  if (top) {
+    const last = rings[rings.length - 1], c = pos.length / 3;
+    pos.push(0, last.y + top, 0);
+    for (let i = 0; i < n; i++) idx.push((rings.length - 1) * n + i, c, (rings.length - 1) * n + (i + 1) % n);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+const INFLATABLE = { small: { w: 1.5, d: 1.5, h: 2.3 }, long: { w: 4.6, d: 1.5, h: 2.8 }, square: { w: 3.2, d: 3.2, h: 2.5 } };
+
+D.inflatable = {
+  desc: 'inflatable cover block — un-inkable, too tall to jump over, you slide off its top. Its size sets its shape: small and '
+    + 'square in plan (w = d ≤ 1.8) is a round drum; otherwise a rounded block (a long wall, a big square). Body in the neutral '
+    + 'colour between the two team inks, a navy lid, a squid emblem each side, little wheeled feet.',
+  params: { size: "'small' (1.5 m drum) | 'long' (4.6 × 1.5 m wall) | 'square' (3.2 m block)", w: 'width, local x (m)', d: 'depth, local z (m)', h: 'height (m, ≥ 2.2)' },
+  variants: 1, mount: 'ground',
+  build(B, o) {
+    const P = INFLATABLE[o.size] || INFLATABLE.small;
+    const w = o.w ?? P.w, d = o.d ?? P.d, h = Math.max(2.2, o.h ?? P.h);
+    const a = w / 2, b = d / 2, round = Math.abs(w - d) < 1e-3 && w <= 1.8;
+    const r = round ? a : Math.min(Math.min(a, b) * 0.7, 0.8);
+    const lift = 0.16, bulge = Math.min(0.07, Math.min(a, b) * 0.06), capY = h - 0.38;
+    // body: a rounded foot, an inflated middle, running up under the lid
+    const rings = [];
+    const e0 = 0.24;
+    for (let k = 0; k <= 4; k++) { const q = (k / 4) * (Math.PI / 2); rings.push({ y: lift + e0 - Math.cos(q) * e0, inset: e0 - Math.sin(q) * e0 }); }
+    for (let k = 1; k <= 8; k++) { const t = k / 8, y = lift + e0 + t * (capY + 0.06 - lift - e0); rings.push({ y, inset: -bulge * Math.sin(Math.PI * (y - lift) / (capY - lift)) }); }
+    B.add('vinyl', inflatableShell(a, b, r, rings), 'white', 0, 0, 0);
+    // the lid: a navy band over the top rim, rolled over into a softly domed top
+    const lid = [], e1 = 0.22;
+    lid.push({ y: capY, inset: 0.035 });
+    for (let k = 0; k <= 5; k++) { const q = (k / 5) * (Math.PI / 2); lid.push({ y: h - e1 + Math.sin(q) * e1, inset: -0.01 + (1 - Math.cos(q)) * e1 }); }
+    B.add('rubber', inflatableShell(a, b, r, lid, 0.06), '#26284a', 0, 0, 0);
+    // underside
+    B.add('rubber', inflatableShell(a, b, r, [{ y: lift + 0.001, inset: e0 }, { y: lift + 0.001, inset: Math.min(a, b) }]), '#26284a', 0, 0, 0);
+    // feet: a navy stub and a small wheel under each corner (round: four round the rim)
+    const feet = round ? [0, 1, 2, 3].map((i) => { const q = Math.PI / 4 + (i * Math.PI) / 2; return [Math.cos(q) * a * 0.62, Math.sin(q) * a * 0.62]; })
+      : [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sz]) => [sx * (a - r * 0.45), sz * (b - r * 0.45)]);
+    for (const [fx, fz] of feet) {
+      B.box('rubber', '#26284a', 0.14, 0.12, 0.2, fx, lift - 0.02, fz, { round: true });
+      B.cyl('rubber', '#15151f', 0.065, 0.06, fx, 0.065, fz, { rz: Math.PI / 2, seg: 10 });
+    }
+    // the emblem on both faces (the long faces of a wall), mid-height, standing proud of the bulge
+    const ls = Math.min(1.25, Math.min(w, d) * (round ? 0.52 : 0.62), (capY - lift) * 0.55), ly = lift + (capY - lift) * 0.5;
+    for (const side of [1, -1]) B.add('vinylLogo', G.plane(ls, ls), 'white', 0, ly, side * (b + bulge + 0.015), { ry: side > 0 ? 0 : Math.PI, uvs: [1, 1] });
+    // cover: one solid box, an off-limits top (you slide off), no ink
+    const ci = round ? a * 0.1 : 0.03;
+    B.col(-a + ci, 0, -b + ci, a - ci, h, b - ci, { roof: true });
+    B.blob(w * 1.15, d * 1.15);
+  },
+};
 
 D.railing = {
   desc: 'Painted steel handrail (posts every ~1.2 m, rounded top rail, mid + toe rails, flanged feet). Runs from pos along local +X.',
@@ -3061,7 +3189,7 @@ function turbineTemplate() {
 }
 
 // ------------------------------------------------------------------------------------------------ the kit
-const CASTS = { paint: true, gloss: true, metal: true, wood: true, rubber: true, foliage: true, fence: true, glow: false, blob: false };
+const CASTS = { paint: true, gloss: true, metal: true, wood: true, rubber: true, foliage: true, fence: true, glow: false, blob: false, vinyl: true, vinylLogo: false };
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _c1 = new THREE.Color(), _white = new THREE.Color(1, 1, 1);
 
 // Spinner templates registered by packs: kind → () => BufferGeometry (instanced with the metal material, spun about
@@ -3082,6 +3210,7 @@ const PACK_HELPERS = {
 };
 registerMarinaVessels(D, PACK_HELPERS);
 registerMarinaDock(D, PACK_HELPERS);
+registerPods(D, PACK_HELPERS);   // sprout pods' default looks (src/game/pods.js)
 // stage-owned packs (src/world/stages/<id>/props.js, types prefixed '<id>_'), each on its own: a broken pack only loses
 // its own types (and never overrides a type that already exists)
 for (const [id, st] of Object.entries(STAGES)) {
@@ -3138,6 +3267,11 @@ export class PropKit {
       blink: new THREE.MeshBasicMaterial({ color: 0xffffff }),
       cloth: clothMaterial(atlas, this.uTime),
       clothDepth: clothDepthMaterial(this.uTime),
+      // inflatable cover blocks: glossy vinyl in the neutral colour between the two team inks (setTeamColors), their emblem
+      vinyl: new THREE.MeshPhysicalMaterial({ vertexColors: true, color: inflatableNeutral(this.teamColors[0], this.teamColors[1]), roughness: 0.4, metalness: 0,
+        clearcoat: 0.55, clearcoatRoughness: 0.3 }),
+      vinylLogo: new THREE.MeshStandardMaterial({ map: canvasTex(256, 256, drawInflatableLogo), transparent: true, alphaTest: 0.3, roughness: 0.45,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
     };
     this.mat.fence.alphaToCoverage = true;
   }
@@ -3161,6 +3295,52 @@ export class PropKit {
     this.lastTris = B.tris;
     this.count++;
     return { colliders: this._xfCols(B.cols, pos, rotY, scale, !!o.oboxCols) };
+  }
+
+  // A prop that moves (stage movers, src/game/movers.js: Calamari County's railcars): built like add() but in its own
+  // frame (its origin = the prop's ground point), merged per material into its own group with this kit's materials
+  // (the lit-window glow follows setNight like the rest) — never part of the static dressing. The caller places and
+  // moves the group, and frees it with disposePart(). Spinners / blinkers / cloth a builder queues are dropped (they
+  // live in the static instanced meshes). Headless: an empty group. Colliders: the caller's (a dynamic level block).
+  buildPart(type, o = {}) {
+    const group = new THREE.Group();
+    group.name = 'prop-part:' + type;
+    const def = D[type];
+    if (!def) { console.warn('[props] unknown prop type', type); return group; }
+    if (this._headless) return group;
+    const saved = this._buckets, n = [this._spin.length, this._blink.length, this._flags.length, this._banners.length];
+    this._buckets = new Map();
+    const B = this._B;
+    B.begin([0, 0, 0], 0, 1, o.seed ?? 1013, def.mount !== 'wall');
+    B.tris = 0;
+    try { def.build(B, { ...o, pos: [0, 0, 0], rotY: 0 }); } finally {
+      // one mesh per material (a moving part is a handful of draws: its no-shadow details ride with their material's
+      // shadow-casting mesh; glass + glow never cast)
+      const byKey = new Map();
+      for (const [bucket, parts] of this._buckets) {
+        if (!parts.length) continue;
+        const [key, flag] = bucket.split('~');
+        let e = byKey.get(key); if (!e) byKey.set(key, (e = { parts: [], cast: false }));
+        e.parts.push(...parts); if (flag !== 'ns') e.cast = true;
+      }
+      for (const [key, e] of byKey) {
+        const mesh = new THREE.Mesh(mergeParts(e.parts), this.mat[key]);
+        mesh.name = 'prop-part:' + type + ':' + key;
+        mesh.castShadow = this.castShadow && CASTS[key] && e.cast && key !== 'gloss';
+        mesh.receiveShadow = key !== 'glow' && key !== 'blob';
+        if (key === 'blob') mesh.renderOrder = 1;
+        group.add(mesh);
+      }
+      this._buckets = saved;
+      this._spin.length = n[0]; this._blink.length = n[1]; this._flags.length = n[2]; this._banners.length = n[3];
+    }
+    return group;
+  }
+  hasType(type) { return !!D[type]; }
+  disposePart(group) {
+    if (!group) return;
+    group.removeFromParent();
+    group.traverse((m) => m.geometry?.dispose());
   }
 
   // Local collider boxes → level boxes. A quarter-turned prop gives exact axis-aligned boxes; any other angle gives the
@@ -3259,6 +3439,7 @@ export class PropKit {
     if (a != null) this.teamColors[0].set(a);
     if (b != null) this.teamColors[1].set(b);
     this._applyColors();
+    if (this.mat?.vinyl) this.mat.vinyl.color.copy(inflatableNeutral(this.teamColors[0], this.teamColors[1]));
   }
 
   update(dt, time) {

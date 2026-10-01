@@ -49,6 +49,21 @@ screen-FX modules should subscribe to these instead of editing gameplay code.
 - Extra SFX names available to everyone via `G.audio.play(name, { pos, volume, pitch })`: `step_dry`, `step_ink`,
   `step_enemy`, `ink_drip`, `gull`, `harbor_ambience` (loop) — plus the full list in docs/CONTRACTS.md §2.
 - Need a new sound? Add a def in src/audio/audio.js and list it in SFX_GROUPS.
+- Subs and specials play through the cue director, `G.cues` (src/audio/cues.js; sounds in src/audio/sfx-cues.js):
+  `G.cues.sub(kind, phase, { owner, team, at })` for a sub's one-shots (phase: throw · land · warn · boom · end · beep ·
+  use) and `G.cues.one(name, { at, owner, kind })` for any other cue — both apply the own / ally / foe mix (your own
+  throws have no position). The loops of anything moving or live (a sub in the air, a fuse, a Kraken, a Crab, a
+  twister, a Tempest cloud …) are the director's: it reads them off the world every frame, so a new sub or special
+  adds its loop in `Cues._gather` rather than calling `G.audio.loop` itself.
+- Every sub's and special's sound rides the cue bus (audio.js `isCue`: the Subs / Specials / Flight / Special alerts /
+  Special stings groups, the Splat Bomb's, the kit subs' `torpedo_` / `tracer_` / `boomerang_` / `waddle_` /
+  `shaker_` sounds): +6 dB over the other SFX at the Cues slider's 100 % (settings `cues`, 0 … 1.5) and a gentle
+  compressor. A new sub / special sound joins it by being listed in those groups (or `G.audio.play(name, { cue: true })`).
+- A thrown sub in the air needs nothing: `Cues._fly` gives it the gliding `sub_flight` (add its voice to sfx-alerts.js
+  `FLIGHT` and cues.js `FLIGHT_KIND`). An enemy special's launch alert and "you're in it" alarm come from the bots'
+  danger model (botSpecials.js `specialDangers`): a new special with a danger area there gets them by adding its src to
+  cues.js `alarmOf` (and an `alert_<kind>` / `DANGER` voice); its sting is `sting_<kind>` on `special:start` /
+  `special:use`.
 
 ## Added since upstream 1.0 (this fork)
 Specials, subs and Zone Control emit these on top of the table above. `actor:dive`, `footstep` and `handplant` are no

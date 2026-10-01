@@ -592,6 +592,7 @@ export class Character {
     // weights
     this.wSub = 0; this.wAim = 0; this.wRoll = 0; this.wAir = 0; this.wDance = 0; this.wTwo = 0; this.wGlow = 0; this.wLow = 0; this.wTired = 0; this.wGoo = 0;
     this.exert = 0; this.brPh = 0; this.idleT = 0; this.shiftT = 2 + this.rng() * 3; this.shiftTgt = 1;
+    this.carryT = 0;   // s left of "carried" (a moving platform under us this frame, held 1 s after it stops)
     this.fidget = -1; this.fidgetT = 0; this.nextFidget = 3 + this.rng() * 3;
     this.lastShot = 99; this.lastRelease = 99; this.charge = 0; this.chargeFlash = 0; this.fullT = 0; this.fireHold = 0; this._fireWant = 0;
     this.lReach = 0; this.ikErrPre = 0; this.leapEnd = -1; this.landAmp = 0; this.hitX = 0; this.hitZ = 1; this.hitAmp = 1; this.hitAcc = 0; this.slamGround = false;
@@ -1374,7 +1375,11 @@ export class Character {
     }
     this.yaw = yaw;
     if (dt > 0) {
-      _v1.subVectors(r, this.rp).divideScalar(dt);
+      _v1.subVectors(r, this.rp);
+      if (s.carry) _v1.sub(s.carry);           // (a moving platform carrying us isn't us walking)
+      const cv = s.carry;
+      this.carryT = cv && (cv.x || cv.y || cv.z) ? 1 : Math.max(0, this.carryT - dt);
+      _v1.divideScalar(dt);
       _v2.copy(this.rv);
       this.rv.lerp(_v1, 1 - Math.exp(-dt * 32));
       _v3.subVectors(this.rv, _v2).divideScalar(dt);
@@ -1476,10 +1481,11 @@ export class Character {
     // idle clock (fidgets + weight shifts)
     const idleNow = kid && !dance && !this.moving && this.grounded && this.wAim < 0.05 && this.wRoll < 0.05 && this.tr[T_LAND] > 0.5 && this.tr[T_SPAWN] > 1.2;
     // idle shuffles: every so often one foot wants to sit a little wider / narrower / turned — the settle steps make it
-    // a real little re-plant (people never stand in the exact same footprint for long)
+    // a real little re-plant (people never stand in the exact same footprint for long). Not while something carries us
+    // (riding Tower Command's moving tower, and a moment after it stops): a step there reads as walking on it
     const SV = this.stVar;
     if (idleNow) {
-      if (this.idleT > 2.5) this.shufT -= dt;
+      if (this.idleT > 2.5 && this.carryT <= 0) this.shufT -= dt;
       if (this.shufT <= 0) {
         // one foot re-plants 8–11 cm away (out / back / in — never across the other), toes turned a little, and the other
         // foot's offset relaxes: enough to trip a settle step, small enough to read as a weight change
@@ -1632,6 +1638,10 @@ export class Character {
     const plantOK = this.kidForm && this.grounded && !this.dance && this.tr[T_LEAP] > 1.9 && this.tr[T_SLAM] > 1.4 && this.tr[T_DODGE] > this.dodgeDur * 0.86;
     // treadmill: the ground (and everything planted on it) slides back under a stationary root
     if (this.tread) for (let i = 0; i < 2; i++) { const f = F[i]; f.pw.x -= this.tvx * dt; f.pw.z -= this.tvz * dt; f.from.x -= this.tvx * dt; f.from.z -= this.tvz * dt; f.disp.x -= this.tvx * dt; f.disp.z -= this.tvz * dt; }
+    // carried (Tower Command's moving tower): what's planted rides along with the root — else a kid standing still on
+    // it keeps stepping after its body (the feet left behind read as a walk)
+    const cv = s.carry;
+    if (cv && (cv.x || cv.y || cv.z)) for (let i = 0; i < 2; i++) { const f = F[i]; f.pw.add(cv); f.from.add(cv); f.to.add(cv); f.disp.add(cv); f.cw.add(cv); }
     if (!plantOK) {
       this.moving = false; this.replant = true;
       for (let i = 0; i < 2; i++) F[i].sw = false;

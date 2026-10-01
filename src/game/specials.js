@@ -19,6 +19,7 @@ import { getPlasticMaterial, getInkMaterial } from './character-mats.js';
 import { rumble } from './actor.js';
 import { SPECIAL_ICONS } from '../ui/ui-icons.js';
 import { KIT_GHOSTS, netRec, netId, netHurt, netMuted, ghostMute } from './kits/registry.js';
+import { teamKnown } from './botSight.js';
 
 // world props for the big specials (kraken, speaker, missile, jetpack, crab) — optional until they exist
 let PROPS = null;
@@ -411,7 +412,9 @@ export class SpecialSystem {
   // ---------------------------------------------------------------------------------------------- damage + hits
   filterDamage(v, amount, attacker, source) {
     const s = v.specialActive;
-    if (s && s.id === 'kraken') { this._knock(v, attacker, Math.min(4, amount * s.def.knockPerDamage)); this._hitFlash(v); return 0; }
+    // riding Tower Command's tower: a Kraken can be shot off it (4× the shove), Bubble Guard's shove is doubled
+    const onTower = !!(G.match?.tower && G.match.tower.riderList.includes(v));
+    if (s && s.id === 'kraken') { this._knock(v, attacker, onTower ? Math.min(10, amount * s.def.knockPerDamage * 4) : Math.min(4, amount * s.def.knockPerDamage)); this._hitFlash(v); return 0; }
     if (s && s.id === 'crab') return IMPL.crab.hurt.call(this, v, s, amount, attacker);
     // Mega Stamp mid-swing: anything coming from the front is deflected (sides + back stay open)
     if (s && s.id === 'stamp' && s.guard > 0 && attacker && attacker !== v && stampFront(v, s, attacker.pos, s.def.deflectArc)) {
@@ -420,7 +423,8 @@ export class SpecialSystem {
     }
     if (v.status.shield > 0) {
       const d = SPECIALS.bubbler;
-      this._knock(v, attacker, Math.min(d.knockMax, amount * d.knockPerDamage));
+      const k2 = onTower ? 2 : 1;
+      this._knock(v, attacker, Math.min(d.knockMax * k2, amount * d.knockPerDamage * k2));
       const m = this.shieldMeshes.get(v); if (m) m.material.uniforms.uHit.value = 0.6;
       if (G.time - (v._shieldSnd || 0) > 0.12 && near(v.pos)) { v._shieldSnd = G.time; play('shield_hit', { pos: v.isLocal ? undefined : v.pos, volume: 0.45 }); }
       return 0;
@@ -801,7 +805,8 @@ class Missile {
       const u = (k - 0.35) / 0.65;
       p.set(this.to.x, this.to.y + 34 * (1 - u) * (1 - u) + 0.3, this.to.z);
       this.mesh.lookAt(p.x, p.y - 1, p.z);
-      if (!this.whistled && near(this.to, 40)) { this.whistled = true; play('strike_whistle', { pos: this.to, volume: 0.9 }); }
+      // sfx-loud: the whistle down onto the ring through the cue mix (the enemy's louder, boosted when you're in it)
+      if (!this.whistled && near(this.to, 40)) { this.whistled = true; if (G.cues) G.cues.one('strike_whistle', { at: this.to, owner: this.owner, kind: 'warn', radius: SPECIALS.strike.radius, range: 40 }); else play('strike_whistle', { pos: this.to, volume: 0.9 }); }
     }
     if (this.t % 0.05 < dt && near(p, 45)) G.fx?.burst(p, UP, this.owner.color, { count: 2, speed: 1.5, size: 0.08, ring: false, mist: false });
     this.ring.material.opacity = 0.35 + 0.35 * Math.abs(Math.sin(this.t * 9));
@@ -832,7 +837,7 @@ class Tornado {
     this.outer.scale.set(this.radius, 9, this.radius);
     this.group.add(this.inner, this.outer);
     sys.scene.add(this.group);
-    this.loop = loop('tornado', { pos: this.pos, volume: 0.8 });
+    this.loop = null;   // sfx-cues: the vortex's loop (and its spin-down) come from src/audio/cues.js
     paint(owner, _v.copy(this.pos).setY(this.pos.y + 0.4), this.radius * 0.7, team);
     G.fx?.explosion(_v.copy(this.pos).setY(this.pos.y + 0.6), col, this.radius * 0.8);
     emit('special:strike', { actor: owner, pos: this.pos.clone(), radius: this.radius });
@@ -925,7 +930,7 @@ class Twister {
   }
   _burst(p, n, soft) {
     paint(this.owner, _v.copy(p).addScaledVector(n, 0.15), soft ? 1.1 : 1.6, this.team);
-    if (near(p, 40)) { G.fx?.burst(p, n, this.owner.color, { count: 12, speed: 4, size: 0.09 }); play('splat_big', { pos: p, volume: 0.6 }); }
+    if (near(p, 40)) { G.fx?.burst(p, n, this.owner.color, { count: 12, speed: 4, size: 0.09 }); G.cues?.one('twister_burst', { at: p, owner: this.owner, kind: 'boom', vol: 0.6 }); }   // sfx-cues
   }
   dispose() { this.sys.scene.remove(this.mesh); this.mesh.material.dispose(); }
 }
@@ -984,7 +989,7 @@ class Speaker {
       if (this.cone) this.cone.scale.z = 1 + Math.sin(this.t * 40) * 0.05 * k;
       if (this.t >= d.charge) {
         this.phase = 'blast'; this.t = 0;
-        this.loop = loop('wail_blast', { pos: this.pos, volume: 1 });
+        this.loop = null;   // sfx-cues: the blast's loop comes from src/audio/cues.js
         emit('shake', { pos: this.pos.clone(), amount: 0.5 });
       }
       return true;
@@ -1111,7 +1116,8 @@ class ThrownStamp {
     this.mesh = partMesh(wd.body, wd.ink, a.team);
     this.mesh.scale.setScalar(1.6);
     sys.scene.add(this.mesh);
-    if (hearable(a)) play('stamp_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.9 });
+    // sfx-loud: the throw through the cue mix (the enemy's carries across the lane; yours from you)
+    if (G.cues) G.cues.one('stamp_throw', { at: a.pos, owner: a, kind: 'throw', vol: 0.9 }); else if (hearable(a)) play('stamp_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.9 });
   }
   update(dt) {
     this.t += dt;
@@ -1144,7 +1150,7 @@ class ThrownStamp {
       paint(this.owner, _v.set(c.x + Math.cos(ang) * rr, c.y + 0.5, c.z + Math.sin(ang) * rr), 0.9, this.team);
     }
     G.fx?.explosion(c, this.owner.color, d.throwRadius);
-    play('stamp_slam', { pos: c, volume: 1 });
+    G.cues?.one('stamp_crash', { at: c, owner: this.owner, kind: 'boom' });   // sfx-cues: the thrown stamp's own crash
     emit('shake', { pos: c.clone(), amount: 0.8 });
     emit('bomb:explode', { actor: this.owner, pos: c.clone(), team: this.team, radius: d.throwRadius });
     blast(this.owner, this.team, c, d.throwRadius, d.throwDamageMax, d.throwDamageMin, 'stamp', 1.2);
@@ -1179,7 +1185,7 @@ class Shell {
       const d = SPECIALS.crab;
       paint(this.owner, at.clone().setY(at.y + 0.1), d.cannonRadius * 0.75, this.team);
       G.fx?.explosion(at, this.owner.color, d.cannonRadius);
-      play('bomb_explode', { pos: at, volume: 0.9, pitch: 0.8 });
+      G.cues?.one('shell_boom', { at, owner: this.owner, kind: 'boom', vol: 0.9 });   // sfx-cues: the mortar's own boom
       emit('bomb:explode', { actor: this.owner, pos: at.clone(), team: this.team, radius: d.cannonRadius });
       blast(this.owner, this.team, at, d.cannonRadius, d.cannonDamageMax, d.cannonDamageMin, 'crab', 0.8);
       return false;
@@ -1209,7 +1215,7 @@ class Orb {
       this.vel.y -= 24 * dt;
       this.pos.addScaledVector(this.vel, dt);
       const hit = G.physics.segment(this.prev, this.pos, _hit, true);
-      if (hit.hit) { this.pos.copy(hit.point).addScaledVector(hit.normal, 0.5); this.phase = 'fuse'; this.t = 0; if (near(this.pos, 50)) play('bomb_beep', { pos: this.pos, volume: 1, pitch: 0.6 }); }
+      if (hit.hit) { this.pos.copy(hit.point).addScaledVector(hit.normal, 0.5); this.phase = 'fuse'; this.t = 0; G.cues?.one('orb_land', { at: this.pos, owner: this.owner, kind: 'warn', radius: SPECIALS.booyah.radius, range: 60 }); }   // sfx-cues (then the orb_fuse loop)
       else if (this.t > 4 || this.pos.y < PLAYER.waterY - 2) return false;
     } else if (this.phase === 'fuse') {
       // swell (warning sphere grows toward the blast radius)
@@ -1299,13 +1305,19 @@ const IMPL = {
       emit('special:launch', { actor: a, to: to.clone() });
       this.end(a, 'launch');
     },
-    // bots: the thickest cluster of enemies, else the most enemy ink
+    // bots: the thickest cluster of the enemies their team knows about (seen, located or seen lately — bots.js /
+    // botSight.js: never where the rest really are), else the most enemy ink
     botTarget(a, s) {
       let best = null, bs = 0;
+      const known = [];
       for (const e of G.actors) {
         if (e.team === a.team || !e.alive) continue;
-        let n = 1; for (const o of G.actors) if (o !== e && o.team === e.team && o.alive && o.pos.distanceTo(e.pos) < 5) n++;
-        if (n > bs) { bs = n; best = e.pos; }
+        const k = a.bot ? teamKnown(a.team, e, 3) : null, p = a.bot ? k && k.pos : e.pos;
+        if (p) known.push(p);
+      }
+      for (const p of known) {
+        let n = 1; for (const q of known) if (q !== p && q.distanceTo(p) < 5) n++;
+        if (n > bs) { bs = n; best = p; }
       }
       const B = bounds();
       if (!best || Math.random() < 0.35) {
@@ -1337,7 +1349,7 @@ const IMPL = {
         const dir = G.projectiles._aimFrom(a, m, _v2).clone();
         this._spawn(a, new Twister(this, a, m, dir), 'tw', [...v3(m), ...v3(dir)]);
         a.character.trigger('shoot');
-        if (hearable(a)) play('zooka_fire', { pos: a.isLocal ? undefined : m, volume: a.isLocal ? 0.9 : 0.6 });
+        G.cues?.one('zooka_fire', { at: m, owner: a, kind: 'start', vol: 0.8, range: 50 });   // sfx-cues: a Zooka shot is heard from further off (yours from you)
         if (a.isLocal) emit('recoil', { amount: 0.02 });
         rumble(a, 0.45, 0.5, 140);
         emit('weapon:fire', { actor: a, weapon: 'zooka', muzzle: m, dir });
@@ -1476,7 +1488,7 @@ const IMPL = {
       if (!inp.fire) s.needRelease = false;
       if (inp.fire && !s.cur && s.count < d.max && !s.done && !s.needRelease) {
         s.cur = new Bubble(this, a); s.curT = 0; this.world.push(s.cur); s.cur.gid = netId(a);
-        s.inflate = hearable(a) ? loop('blower_inflate', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.6 : 0.4 }) : null;
+        s.inflate = null;   // sfx-cues: the inflate loop comes from src/audio/cues.js
       }
       if (s.cur) {
         s.curT += dt; s.firing = 0.3;
@@ -1525,7 +1537,7 @@ const IMPL = {
         tank.add(s.pack);
         s.nozzles = d && d.nozzles ? d.nozzles.map((n) => n.clone()) : [new THREE.Vector3(-0.08, -0.12, -0.05), new THREE.Vector3(0.08, -0.12, -0.05)];
       }
-      s.loop = hearable(a) ? loop('jet_loop', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.55 : 0.4 }) : null;
+      s.loop = null;   // sfx-cues: the jet's loop comes from src/audio/cues.js (heard as soon as you're near, never outliving it)
     },
     body(a, s, dt) {
       const d = s.def, mv = a.intent.move;
@@ -1543,7 +1555,7 @@ const IMPL = {
       if (jump && !s.jumpWas && s.boostCd <= 0) {
         s.boostCd = d.boostGap; s.boostT = 0.35;
         a.vel.y = d.boost;
-        if (hearable(a)) play('zip_pull', { pos: a.isLocal ? undefined : a.pos, volume: 0.7, pitch: 0.8 });
+        G.cues?.one('jet_boost', { at: a.pos, owner: a, kind: 'start', vol: 0.7 });   // sfx-cues: the jet's own boost
         if (near(a.pos) && a.character.tank?.group) for (const n of s.nozzles || []) G.fx?.burst(a.character.tank.group.localToWorld(_v.copy(n)), DOWN, a.color, { count: 8, speed: 7, size: 0.09 });
         rumble(a, 0.3, 0.3, 90);
       }
@@ -1722,7 +1734,7 @@ const IMPL = {
       s.ball = new THREE.Mesh(this.sphereGeo, new THREE.MeshBasicMaterial({ color: a.color.clone().multiplyScalar(2) }));
       s.halo = new THREE.Mesh(this.sphereGeo, bubbleMat(a.color));
       this._add(s.ball, s.halo);
-      s.loop = hearable(a) ? loop('booyah_charge', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.55 : 0.4 }) : null;
+      s.loop = null;   // sfx-cues: the charge loop comes from src/audio/cues.js
     },
     weapon(a, s, dt, inp) {
       const d = s.def;
@@ -1858,7 +1870,7 @@ const IMPL = {
       const g = groundBelow(c, 3);
       paint(a, (g || c).clone().setY((g || c).y + 0.2), d.impactRadius * 0.75, a.team);
       G.fx?.explosion(c, a.color, d.impactRadius);
-      if (near(c, 40)) play('blaster_boom', { pos: a.isLocal ? undefined : c, volume: 0.6, pitch: 1.25 });
+      G.cues?.one('zip_impact', { at: c, owner: a, kind: 'boom', vol: 0.6, range: 40 });   // sfx-cues: the Zipline's own impact
       emit('shake', { pos: c.clone(), amount: 0.35 });
     },
     tick(a, s, dt) {
@@ -1938,7 +1950,7 @@ const IMPL = {
       }
       if (!s.ball) { s.ball = new THREE.Mesh(this.sphereGeo, getInkMaterial(a.color)); s.ball.scale.setScalar(0.95); s.ball.position.y = 0.95; s.ball.visible = false; s.rig.add(s.ball); }
       this._add(s.rig);
-      s.loop = hearable(a) ? loop('crab_move', { pos: a.isLocal ? undefined : a.pos, volume: 0 }) : null;
+      s.loop = null;   // sfx-cues: the rig's walk / roll loops come from src/audio/cues.js
       G.fx?.explosion(_v.copy(a.pos).setY(a.pos.y + 0.6), a.color, 1.5);
     },
     weapon(a, s, dt, inp) {
@@ -1948,8 +1960,7 @@ const IMPL = {
       if (roll !== s.roll) {
         s.roll = roll;
         s.speed = roll ? d.rollSpeed : d.speed;
-        s.loop?.stop?.(0.1);
-        s.loop = hearable(a) ? loop(roll ? 'crab_roll' : 'crab_move', { pos: a.isLocal ? undefined : a.pos, volume: 0 }) : null;
+        s.loop = null;   // sfx-cues: src/audio/cues.js swaps the walk / roll loops
       }
       // the hull turns slowly toward the aim (shots go where the hull points, not where you look)
       const hs = Math.hypot(a.vel.x, a.vel.z);
@@ -2097,7 +2108,7 @@ const GHOST = {
         const c = V(d, 2);
         s.zip = null; s.hang = d[5] ? s.def.hang : 0;
         G.fx?.explosion(c, a.color, s.def.impactRadius);
-        if (near(c, 40)) play('blaster_boom', { pos: c, volume: 0.6, pitch: 1.25 });
+        G.cues?.one('zip_impact', { at: c, owner: a, kind: 'boom', vol: 0.6, range: 40 });   // sfx-cues
         emit('shake', { pos: c.clone(), amount: 0.35 });
       }
     },
@@ -2109,8 +2120,7 @@ const GHOST = {
         s.hull += angleDiff(s.hull, N.hull) * Math.min(1, dt * 15);
         if (N.roll !== s.roll) {
           s.roll = N.roll;
-          s.loop?.stop?.(0.1);
-          s.loop = hearable(a) ? loop(s.roll ? 'crab_roll' : 'crab_move', { pos: a.pos, volume: 0 }) : null;
+          s.loop = null;   // sfx-cues: src/audio/cues.js swaps the walk / roll loops
         }
         if (N.firing) s.firing = 0.3;
       }

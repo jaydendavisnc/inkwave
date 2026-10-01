@@ -117,7 +117,7 @@ export class Minimap {
     const tc = { x: 0, y: 0 };
     // 1) rasterise every solid block's top surface (ramps included) → height + owning block + normal
     for (const b of lvl.blocks) {
-      if (!b.solid) continue;
+      if (!b.solid || b.dynamic) continue;   // (a moving block — the tower — is drawn as its own marker)
       if (b.hidden && (b.roof || b.perch) && b.aabbMin.y > 3) continue;   // overhead steel (crane girders, booms): not over the turf
       const n = b.axes[1];
       if (n.y < 0.45) continue;
@@ -375,6 +375,10 @@ export class Minimap {
     // others as faint dashed ghosts
     const Zc = G.match && !G.match.attract ? G.match.zones : null;
     if (Zc) this._drawZones(c, Zc, hex, t);
+    // Tower Command: the path (the stretch ahead lit in the ink of the team in control), checkpoints and goals; the
+    // tower itself goes on top of everything (below)
+    const Tw = G.match && !G.match.attract ? G.match.tower : null;
+    if (Tw) this._drawTowerPath(c, Tw, hex, t);
     const tc = this._tc || (this._tc = { x: 0, y: 0 });
     // spawn pads
     const pads = this.level.spawnPads || [];
@@ -472,10 +476,20 @@ export class Minimap {
       else c.arc(tc.x, tc.y, r, 0, TAU);
       c.fillStyle = col; c.fill();
       if (st === 'spray') { c.lineWidth = 1.5; c.strokeStyle = col; c.globalAlpha = 0.5; c.beginPath(); c.arc(tc.x, tc.y, it.sub.sprayRadius * s * 0.8, 0, TAU); c.stroke(); c.globalAlpha = 1; }
+      // a beacon's jumps left: a dot under it per jump (lit) out of its two (dark: used) — the last one stands alone
+      if (st === 'beacon') {
+        const n = it.sub.uses || 2, pr = Math.max(1.2, s * 0.22);
+        for (let i = 0; i < n; i++) {
+          const px = tc.x + (i - (n - 1) / 2) * pr * 2.6, py = tc.y + r * 1.25 + pr * 1.6;
+          c.beginPath(); c.arc(px, py, pr + 1, 0, TAU); c.fillStyle = '#15121c'; c.fill();
+          c.beginPath(); c.arc(px, py, pr, 0, TAU); c.fillStyle = i < it.uses ? col : '#4a4458'; c.fill();
+        }
+      }
     }
     // specials: vortex targets + funnels, sound beams, bubbles, cheer orbs, the local strike cursor
     G.specials?.drawMap(c, this, tc, s, hex, t);
     c.globalAlpha = 1;
+    if (Tw) this._drawTowerIcon(c, Tw, hex, t);
     this._jumpLines(c, s, hex, t, me);
     void W; void H;
   }
@@ -537,6 +551,67 @@ export class Minimap {
       }
       c.restore();
     }
+  }
+
+  _drawTowerPath(c, T, hex, t) {
+    const s = this.s, tc = { x: 0, y: 0 };
+    if (this._twFor !== T || this._twFlip !== this.flip) {
+      this._twFor = T; this._twFlip = this.flip;
+      this._twLine = T.path.line(0.75).map(({ s: d, p }) => { this.toCanvas(p.x, p.z, tc); return { d, x: tc.x, y: tc.y }; });
+      const p = new Path2D();
+      this._twLine.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+      this._twPath = p;
+    }
+    c.save();
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    c.globalAlpha = 0.55; c.lineWidth = 1.2 * s; c.strokeStyle = '#15121c'; c.stroke(this._twPath);
+    c.globalAlpha = 0.7; c.lineWidth = 0.55 * s; c.strokeStyle = '#f4f0e6'; c.stroke(this._twPath);
+    // the stretch it's heading down: from the tower to its next stop, in the controlling team's ink, marching its way
+    let end = null;
+    if (T.owner >= 0) { const cp = T._nextCp(T.owner), dir = T.owner === 0 ? 1 : -1; end = T.homing ? 0 : cp ? dir * cp.d : dir * T.path.len[T.owner]; }
+    else if (T.returning) end = 0;
+    if (end != null && Math.abs(end - T.s) > 0.1) {
+      const lo = Math.min(T.s, end), hi = Math.max(T.s, end), seg = new Path2D();
+      let first = true;
+      for (const q of this._twLine) { if (q.d < lo || q.d > hi) continue; if (first) { seg.moveTo(q.x, q.y); first = false; } else seg.lineTo(q.x, q.y); }
+      c.globalAlpha = 1; c.lineWidth = 1.05 * s; c.strokeStyle = T.owner >= 0 ? hex[T.owner] : '#ffd54a';
+      c.setLineDash([1.4 * s, 0.9 * s]); c.lineDashOffset = (end > T.s ? -1 : 1) * t * 3 * s; c.stroke(seg); c.setLineDash([]);
+    }
+    // checkpoints (the colour of the team that pushes through them; grey once cleared) and the two goals
+    for (const cp of T.cps) {
+      const p = T.path.at(cp.team === 0 ? cp.d : -cp.d);
+      this.toCanvas(p.x, p.z, tc);
+      const r = 0.95 * s;
+      c.globalAlpha = 1; c.fillStyle = cp.cleared ? '#8a8d96' : hex[cp.team]; c.strokeStyle = '#15121c'; c.lineWidth = 0.35 * s;
+      c.beginPath(); c.moveTo(tc.x, tc.y - r); c.lineTo(tc.x + r, tc.y); c.lineTo(tc.x, tc.y + r); c.lineTo(tc.x - r, tc.y); c.closePath(); c.fill(); c.stroke();
+    }
+    for (let team = 0; team < 2; team++) {
+      const p = T.path.at(team === 0 ? T.path.len[0] : -T.path.len[1]);
+      this.toCanvas(p.x, p.z, tc);
+      const pulse = 0.5 + 0.5 * Math.sin(t * 3 + team * 2);
+      c.globalAlpha = 0.35 + 0.25 * pulse; c.fillStyle = hex[team];
+      c.beginPath(); c.arc(tc.x, tc.y, 2.3 * s, 0, TAU); c.fill();
+      c.globalAlpha = 1; c.lineWidth = 0.45 * s; c.strokeStyle = '#15121c'; c.fillStyle = hex[team];
+      c.beginPath(); c.arc(tc.x, tc.y, 1.1 * s, 0, TAU); c.fill(); c.stroke();
+    }
+    c.restore();
+  }
+  // the tower: always shown — a badge in the ink of the team in control (warm yellow while neutral), a ring while contested
+  _drawTowerIcon(c, T, hex, t) {
+    const s = this.s, tc = this.toCanvas(T.pos.x, T.pos.z, { x: 0, y: 0 });
+    const col = T.owner >= 0 ? hex[T.owner] : '#ffd54a', R = 1.9 * s;
+    c.save();
+    c.globalAlpha = 0.35 + 0.2 * Math.sin(t * 5); c.fillStyle = col;
+    c.beginPath(); c.arc(tc.x, tc.y, R * 1.7, 0, TAU); c.fill();
+    c.globalAlpha = 1; c.fillStyle = '#15121c'; c.beginPath(); c.arc(tc.x, tc.y, R + 0.45 * s, 0, TAU); c.fill();
+    c.fillStyle = col; c.beginPath(); c.arc(tc.x, tc.y, R, 0, TAU); c.fill();
+    // a little tower glyph: the deck and the mast
+    c.fillStyle = '#15121c';
+    c.fillRect(tc.x - R * 0.62, tc.y + R * 0.1, R * 1.24, R * 0.38);
+    c.fillRect(tc.x - R * 0.1, tc.y - R * 0.62, R * 0.2, R * 0.75);
+    c.beginPath(); c.arc(tc.x, tc.y - R * 0.62, R * 0.2, 0, TAU); c.fill();
+    if (T.contested) { c.strokeStyle = '#ffffff'; c.lineWidth = 0.5 * s; c.setLineDash([0.8 * s, 0.6 * s]); c.lineDashOffset = -t * 4 * s; c.beginPath(); c.arc(tc.x, tc.y, R * 1.45, 0, TAU); c.stroke(); }
+    c.restore();
   }
 
   _drawZones(c, Z, hex, t) {

@@ -18,7 +18,7 @@ G.net.hostId
 G.net.isHost     // boolean
 G.net.error      // last error message (string) or null
 G.net.lobby = {
-  map: 'tidewater', time: 'day' | 'dusk', duration: 180, bots: true, difficulty: 'normal', mode: 'turf' | 'zones' | 'boss',
+  map: 'tidewater', time: 'day' | 'dusk', duration: 180, bots: true, difficulty: 'normal', mode: 'turf' | 'zones' | 'tower' | 'boss',
   players: [{ id, name, team: 0 | 1, weapon, sub, special, style, ready, host, you, ping }],   // stable order: join order
   maxPlayers: 8,
 }
@@ -88,12 +88,22 @@ result on every screen.
 sub, a Waddle …) is recorded by its owner as `['k', nid, kind, data]` and replayed by the kit's `ghost(actor, data)`:
 visual-only (paint muted, hits dropped) and never deciding for itself — its owner's end / lock / path records drive it.
 A hit on a ghost device (curtain, beacon, Waddle, Torpedo …) goes to its owner (`{k:'dh'}` → the kit's `netHurt`).
+The built-in subs (subs.js) add an update record `[3, gid, …]` from the owner: a Lurk Mine tripped (it pops up on every
+screen — it's invisible to the other team until then, on theirs too), a Skitter Bomb stopping to wind up (ghost Skitters
+never trigger themselves), a Hop Beacon's jumps left, a Drip Curtain's ink after hits (its decay runs everywhere); a
+super jump onto a remote player's beacon goes to its owner through the same device-hit channel (`beaconUse`). The
+Waddle's windup is its `[5, gid, x, y, z]`.
 A kit's pose state (a Mitts leap, a held Brolly canopy) rides the actor tick (`netState` / `netApply`).
 
 **Zone Control.** The host runs the rules; every decision (capture, control, penalty, rotation, overtime, the end
 with its exact counts) and a count snapshot twice a second go on its event timeline as `['z', …]`, so they land in
 step with the paint that caused them. Guests follow (zones.js `netEvent`): they only predict the count between
 snapshots, and each client fills its own players' special gauges.
+
+**Tower Command.** Likewise: the host runs the rules and records control, checkpoints (reach / clear / refill),
+overtime and the end as `['tw', …]`, plus a position snapshot 10× a second (tower.js `netEvent`). Guests ease the
+tower onto the host's position (dead-reckoned between snapshots); each client carries its own players standing on it
+and fills its own players' gauges. The start config carries `mode: 'tower'` and its fixed 5:00.
 
 **Relay (server/).** One Durable Object per room code: membership, host election, join refusal (unknown / full /
 match running) and blind fan-out of `b|` / `s|to|` payloads. Clients send `"ping"` every 2 s, answered by the runtime

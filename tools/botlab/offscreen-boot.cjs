@@ -19,12 +19,18 @@ electron.app.whenReady().then(() => { try { electron.powerSaveBlocker.start('pre
 electron.app.commandLine.appendSwitch('disable-renderer-backgrounding');
 electron.app.commandLine.appendSwitch('disable-background-timer-throttling');
 electron.app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+// DEVSTAGE=1: every game page loads with ?devstage (src/main.js DEV_STAGE), so an online-only stage (config onlineOnly —
+// Cargo Terminal) boots offline for page tests, shots, tower checks, bakes and stage art (a solo walk: never with bots)
+const DEVSTAGE = process.env.DEVSTAGE === '1';
+const devURL = (u) => (DEVSTAGE && typeof u === 'string' && u.startsWith('app://inkwave/index.html') && !/[?&]devstage\b/.test(u)
+  ? u.replace(/^([^#]*?)(\?[^#]*)?(#.*)?$/, (_, p, q, h) => `${p}${q ? q + '&' : '?'}devstage${h || ''}`) : u);
 class OffscreenBW extends electron.BrowserWindow {
   constructor(opts = {}) {
     super({ ...opts, show: false, fullscreen: false, width: 1512, height: 945, webPreferences: { ...(opts.webPreferences || {}), offscreen: true } });
     this.webContents.setFrameRate(60);
     this.webContents.setAudioMuted(true);
   }
+  loadURL(url, opts) { return super.loadURL(devURL(url), opts); }
 }
 // Serve app:// straight from disk (same URL → file mapping as the app): net.fetch(file://) can cost ~0.4 s per file in
 // sandboxed shells, which turns the game's ~150 module loads into a minutes-long boot.

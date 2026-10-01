@@ -4,7 +4,7 @@ import { G, on, emit, clamp, damp } from './core/ctx.js';
 import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { mapTheme,
-  DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
+  DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, TOWER, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
 } from './config.js';
 import { Level } from './world/level.js';
@@ -25,9 +25,13 @@ import { SubSystem } from './game/subs.js';
 import { SpecialSystem } from './game/specials.js';
 import { CameraRig } from './game/cameraRig.js';
 import { Match } from './game/match.js';
+import { podColliders, PodLooks } from './game/pods.js';
 import { Minimap } from './game/minimap.js';
+import { revealedTo } from './game/reveal.js';
 import { Showcase } from './game/showcase.js';
 import { ZoneMarks } from './fx/zoneMarks.js';
+import { TowerFx } from './fx/towerFx.js';
+import { cues } from './audio/cues.js';   // sfx-cues: sub / special audio cues (the loops, warnings, friend / foe mix)
 import { BOSS_MODE } from './boss/bossMode.js';
 
 const params = new URLSearchParams(location.search);
@@ -105,6 +109,7 @@ class Game {
     this.CharacterClass = charMod.Character;
     try { this.PropKit = (await import('./world/props.js')).PropKit; } catch (e) { console.error('[inkwave] prop kit failed to load', e); this.PropKit = null; }
     G.audio = audioMod.audio; G.music = musicMod.music;
+    G.cues = cues;   // sfx-cues
     await progress(0.15, 'Building the plaza…');
 
     // world
@@ -122,6 +127,7 @@ class Game {
     } catch (e) { console.error('[inkwave] texture library failed — procedural fallback', e); this.texlib = null; }
     await this._buildWorld(map);
     this.zoneMarks = new ZoneMarks(scene);   // Zone Control ground markings: build / clear themselves on 'match:state'
+    this.towerFx = new TowerFx(scene);       // Tower Command: the tower, its light pillar, the path glow, checkpoint beacons
     await progress(0.4, 'Filling the harbor…');
     const B = G.level.bounds;
     G.env = new envMod.Environment(G.renderer, scene, { bounds: B, theme: this.theme, shadowSize: q.shadowSize, footprint: this._footprint(G.level) });
@@ -180,7 +186,7 @@ class Game {
     requestAnimationFrame((t) => this._loop(t));
     if (params.has('autostart')) {
       const pm = params.get('mode');
-      this.api.startMatch({ mapId: map.id, difficulty: params.get('difficulty') || this.settings.difficulty, duration: +params.get('autostart') || undefined, mode: pm === 'boss' || pm === 'zones' ? pm : 'turf' });
+      this.api.startMatch({ mapId: map.id, difficulty: params.get('difficulty') || this.settings.difficulty, duration: +params.get('autostart') || undefined, mode: ['boss', 'zones', 'tower'].includes(pm) ? pm : 'turf' });
     }
     this.bootMs = Math.round(performance.now() - t0);
     window.__inkwave = this; // debug/audit hook
@@ -208,19 +214,30 @@ class Game {
   // decor, navigation graph and minimap. Environment/FX/projectiles persist across stages.
   // mode: 'turf' | 'zones' — a stage with Zone Control-only pieces (variants.js) builds a separate world for that mode
   async _buildWorld(map, mode = 'turf') {
-    const scene = G.scene;
-    const layoutId = map.layout || map.id;
-    const worldKey = variantKey(layoutId, MAP_LAYOUTS[layoutId], dressingFor(layoutId), mode);
-    if (this.worldKey === worldKey) { this.mapDef = map; return; }
-    // the rebuild awaits (lightmap fetch) between swapping G.level and G.paint: hold the simulation until every
-    // stage-dependent system matches, or a frame in between raycasts the new level and samples the old paint atlas
-    this._building = true;
-    try { await this._buildWorldNow(map, scene, layoutId, mode, worldKey); } finally { this._building = false; }
+    // one build at a time: a build awaits (the lightmap fetch) midway, so two overlapping ones (a match started while the
+    // menu backdrop was still switching stage) would interleave — the slower one redrawing the stage decals (murals) or
+    // swapping the level under the other. Each waits for the one before it, then checks what's built.
+    const prev = this._buildChain || Promise.resolve();
+    let done;
+    this._buildChain = new Promise((r) => { done = r; });
+    try {
+      await prev;
+      const scene = G.scene;
+      const layoutId = map.layout || map.id;
+      const worldKey = variantKey(layoutId, MAP_LAYOUTS[layoutId], dressingFor(layoutId), mode);
+      if (this.worldKey === worldKey) { this.mapDef = map; return; }
+      // the rebuild awaits (lightmap fetch) between swapping G.level and G.paint: hold the simulation until every
+      // stage-dependent system matches, or a frame in between raycasts the new level and samples the old paint atlas
+      this._building = true;
+      try { await this._buildWorldNow(map, scene, layoutId, mode, worldKey); } finally { this._building = false; }
+    } finally { done(); }
   }
   async _buildWorldNow(map, scene, layoutId, mode = 'turf', worldKey = layoutId) {
     this.zoneMarks?.clear();   // zone markings belong to the old stage's faces
+    this.towerFx?.clear();
     if (this.levelMesh) { scene.remove(this.levelMesh, this.grateMesh); this.levelMesh.geometry.dispose(); this.grateMesh?.geometry.dispose(); this.levelMat.dispose(); this.grateMat?.dispose(); }
     if (this.decor) { scene.remove(this.decor.group); }
+    this.podLooks?.dispose(); this.podLooks = null;   // (built with the prop kit: gone before the kit goes)
     if (this.props) { this.props.dispose?.(); this.props = null; }
     G.paint?.dispose();
     this.layoutId = layoutId; this.worldKey = worldKey;
@@ -239,7 +256,10 @@ class Game {
         this.props.build();
       } catch (e) { console.error('[inkwave] props failed', e); this.props = null; }
     }
-    const level = (G.level = new Level(layoutFor(MAP_LAYOUTS[layoutId], mode), colliders));
+    const layout = layoutFor(MAP_LAYOUTS[layoutId], mode);
+    colliders.push(...podColliders(layout));   // sprout pods: the engine's planters, only when the layout asks (pods.js)
+    const level = (G.level = new Level(layout, colliders));
+    this.podLooks = new PodLooks(layout);      // the pods' bulbs and hedges (the match's StagePods drives them)
     G.physics = new Physics(level);
     const lightmap = await this._loadLightmap(level, worldKey);
     G.paint = new PaintSystem(G.renderer, level, { atlasSize: q.paintAtlas, maxDensity: q.paintAtlas >= 4096 ? 30 : 18 });
@@ -386,6 +406,7 @@ class Game {
       toMainMenu: () => self.quitToMenu(),
       onScreenChange: (s) => self._onScreen(s),
       playSound: (n) => { G.audio?.init?.(); G.audio?.play(n); },
+      cuePreview: () => { G.audio?.init?.(); G.cues?.preview?.(); },   // sfx-loud: the Cues slider plays a cue at its new level
     });
     return api;
   }
@@ -400,10 +421,10 @@ class Game {
     saveJSON('inkwave.settings', this.settings);
     if ('quality' in partial || 'shadows' in partial || 'bloom' in partial) this.R?.applySettings(this.settings);
     if ('fullscreen' in partial && window.inkwaveNative) window.inkwaveNative.setFullScreen(!!partial.fullscreen);
-    if ('master' in partial || 'music' in partial || 'sfx' in partial) this._applyAudioVolumes();
+    if ('master' in partial || 'music' in partial || 'sfx' in partial || 'cues' in partial) this._applyAudioVolumes();
     if ('colorblind' in partial && G.mode !== 'match') this._setPalette(this._pickPalette());
   }
-  _applyAudioVolumes() { G.audio?.setVolumes?.({ master: this.settings.master, music: this.settings.music, sfx: this.settings.sfx }); }
+  _applyAudioVolumes() { G.audio?.setVolumes?.({ master: this.settings.master, music: this.settings.music, sfx: this.settings.sfx, cues: this.settings.cues ?? 1 }); }
 
   _onScreen(s) {
     // the loadout opened mid-practice sits over the live stage: tuck the HUD away while it's up
@@ -659,14 +680,14 @@ class Game {
       mapId: o.mapId === 'sunset' ? 'tidewater' : (o.mapId || this.mapDef.id),
       time: o.mapId === 'sunset' ? 'dusk' : (o.time || this.time || 'day'),
       difficulty: o.difficulty || this.settings.difficulty,
-      // Zone Control / Boss Battle from the stage select's MODE; practice is always turf
-      mode: o.practice ? 'turf' : o.mode === 'zones' ? 'zones' : o.mode === 'boss' ? 'boss' : 'turf',
+      // Zone Control / Tower Command / Boss Battle from the stage select's MODE; practice is always turf
+      mode: o.practice ? 'turf' : ['zones', 'tower', 'boss'].includes(o.mode) ? o.mode : 'turf',
     };
-    opts.duration = opts.mode === 'zones' ? (o.duration || ZONES.duration) : opts.mode === 'boss' ? (o.duration || BOSS_MODE.duration)
+    opts.duration = opts.mode === 'zones' ? (o.duration || ZONES.duration) : opts.mode === 'tower' ? (o.duration || TOWER.duration) : opts.mode === 'boss' ? (o.duration || BOSS_MODE.duration)
       : Math.min(MATCH.maxDuration, o.duration || this.settings.matchLength || MATCH.defaultDuration);
     if (!practice) this.lastMatchOpts = opts;
     G.audio?.init?.();
-    G.audio?.duck?.(1, 0.01);   // a new stage picked from the practice pause menu starts un-ducked
+    G.audio?.unduck?.(); G.audio?.pauseLoops?.(false);   // a new stage picked from the practice pause menu starts un-ducked, loops live
     this.input.requestLock();
     this.menus?.show(null);
     await this._fade(1, 350);
@@ -687,7 +708,7 @@ class Game {
     await this._buildWorld(map, opts.mode);   // no-op when this stage (+ mode variant) is already built
     const theme = mapTheme(map, opts.time);
     this.time = opts.time === 'dusk' ? 'dusk' : 'day';
-    if (theme !== this.theme) {
+    if (theme !== this.theme || G.env.lookStale) {   // (lookStale: a stage with its own look — layout.env — came or went)
       this.theme = theme;
       G.env.setTheme?.(theme);
       if (G.env.envMap) G.scene.environment = G.env.envMap;
@@ -734,6 +755,7 @@ class Game {
     this.input.exitLock();
     this.menus?.show('loadout', { under: ['pause'], quick: true });
     G.audio?.duck?.(0.5, 99);
+    G.audio?.pauseLoops?.(true);
     G.music?.pause?.();
   }
 
@@ -760,6 +782,7 @@ class Game {
     const a = this.match.local;
     G.projectiles.clear(); G.subs.clear(); G.specials.clear(); G.fx.clear?.(); G.paint.clear(); this._clearDeathMarks();
     if (!a) return;
+    this.match.pods?.reset();
     a.respawn();
     a.special = a.specialCost();
     a.stats.turf = 0; a.stats.splats = 0; a.stats.deaths = 0; a.stats.specials = 0;
@@ -779,7 +802,7 @@ class Game {
     await this._buildWorld(map, cfg.mode);   // no-op when this stage (+ mode variant) is already built
     const theme = mapTheme(map, cfg.time);
     this.time = cfg.time === 'dusk' ? 'dusk' : 'day';
-    if (theme !== this.theme) {
+    if (theme !== this.theme || G.env.lookStale) {   // (lookStale: a stage with its own look — layout.env — came or went)
       this.theme = theme;
       G.env.setTheme?.(theme);
       if (G.env.envMap) G.scene.environment = G.env.envMap;
@@ -836,7 +859,8 @@ class Game {
       this._startAttract();
       this.menus?.show(this.menus?.hasScreen?.('lobby') === false ? 'main' : 'lobby');
       this._playMusic('menu');
-      G.audio?.duck?.(1, 0.01);
+      G.audio?.unduck?.();
+      G.audio?.pauseLoops?.(false);
       this._fade(0, 500);
     } finally { this._netEnding = false; }
   }
@@ -879,6 +903,7 @@ class Game {
     this.input.exitLock();
     this.menus?.show('pause');
     G.audio?.duck?.(0.5, 99);
+    G.audio?.pauseLoops?.(true);   // charge hums, rolls, machinery: silent while the match is frozen
     G.music?.pause?.(); // a recording holds its place so the final-minute song stays in step with the clock
   }
   resume() {
@@ -887,7 +912,8 @@ class Game {
     this.match.paused = false;
     if (this.match.controller) this.match.controller.enabled = true;
     this.input.requestLock();
-    G.audio?.duck?.(1, 0.01);
+    G.audio?.unduck?.();
+    G.audio?.pauseLoops?.(false);
     G.music?.resume?.();
   }
   async quitToMenu(screen = 'main') {
@@ -905,7 +931,8 @@ class Game {
     this.hud?.setPractice?.(false);
     this.menus?.show(screen);
     this._playMusic('menu');
-    G.audio?.duck?.(1, 0.01);
+    G.audio?.unduck?.();
+    G.audio?.pauseLoops?.(false);
     this._fade(0, 500);
   }
 
@@ -985,7 +1012,15 @@ class Game {
       const zs = m.zones.state();
       zr = { counts: [...zs.count], penalty: zs.penalty.map((p) => Math.max(0, Math.ceil(p - 1e-6))), winner: m.result.winner, reason: m.result.reason || 'time', overtime: !!m.result.overtime, overtimeT: zs.overtimeT };
     }
-    const judgeP = zr
+    // Tower Command: each team's score (100 → 0 at the enemy goal), how far it got, winner and how it was won
+    let tr = null;
+    if (m.mode === 'tower' && m.tower && m.result.mode === 'tower') {
+      const R = m.result;
+      tr = { counts: [...R.counts], best: [...R.best], len: [...R.len], winner: R.winner, reason: R.reason || 'time', overtime: !!R.overtime, overtimeT: m.tower.overtimeT };
+    }
+    const judgeP = tr
+      ? this.hud?.judge({ mode: 'tower', colors: [G.teamHex[0], G.teamHex[1]], names: this.palette.names || TEAM_NAMES, counts: tr.counts, best: tr.best, len: tr.len, winner: tr.winner, reason: tr.reason, overtime: tr.overtime })
+      : zr
       ? this.hud?.judge({ mode: 'zones', colors: [G.teamHex[0], G.teamHex[1]], names: this.palette.names || TEAM_NAMES, counts: zr.counts, penalty: zr.penalty, winner: zr.winner, reason: zr.reason, overtime: zr.overtime, percents: [cov[0] * 100, cov[1] * 100] })
       : this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES });
     await (judgeP || new Promise((r) => setTimeout(r, 4000)));
@@ -1007,16 +1042,25 @@ class Game {
         ['ZONE INK', Math.round(zoneTurf * ZX.xpPerZoneTurfPoint)], ['SPLATS', Math.round(local.stats.splats * PROGRESSION.xpPerSplat)], ['KNOCKOUT', won && zr.reason === 'knockout' ? ZX.xpKnockout : 0]].filter(([, v], i) => i < 2 || v > 0);
       gained = xpParts.reduce((a, [, v]) => a + v, 0);
     }
+    if (tr) {
+      // Tower Command: less per point of turf (a 5 min match), extra for time riding the tower, a knockout bonus
+      const TX = PROGRESSION.tower || { turfScale: 0.6, xpPerRideSecond: 6, xpKnockout: 300 };
+      const ride = Math.round(local.stats.towerRide || 0);
+      xpParts = [[won ? 'WIN BONUS' : 'MATCH', won ? PROGRESSION.xpWin : PROGRESSION.xpLose], ['TURF', Math.round(turf * PROGRESSION.xpPerTurfPoint * TX.turfScale)],
+        ['TOWER RIDE', Math.round(ride * TX.xpPerRideSecond)], ['SPLATS', Math.round(local.stats.splats * PROGRESSION.xpPerSplat)], ['KNOCKOUT', won && tr.reason === 'knockout' ? TX.xpKnockout : 0]].filter(([, v], i) => i < 2 || v > 0);
+      gained = xpParts.reduce((a, [, v]) => a + v, 0);
+    }
     const before = { level: p.level, xp: p.xp, toNext: PROGRESSION.xpForLevel(p.level) };
     p.xp += gained; p.matches++; if (won) p.wins++; p.totalTurf += turf;
     while (p.xp >= PROGRESSION.xpForLevel(p.level)) { p.xp -= PROGRESSION.xpForLevel(p.level); p.level++; }
     saveJSON('inkwave.profile', p);
     const data = {
       win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: this.palette.names || TEAM_NAMES,
-      players: m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, deaths: a.stats.deaths, isSelf: a.isLocal, bot: !!a.isBot, ...(zr ? { zoneTurf: Math.round(a.stats.zoneTurf || 0) } : {}) })),
+      players: m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, deaths: a.stats.deaths, isSelf: a.isLocal, bot: !!a.isBot, ...(zr ? { zoneTurf: Math.round(a.stats.zoneTurf || 0) } : {}), ...(tr ? { towerRide: Math.round(a.stats.towerRide || 0) } : {}) })),
       xp: { gained, levelBefore: before.level, levelAfter: p.level, xpBefore: before.xp, xpAfter: p.xp, xpToNextBefore: before.toNext, xpToNextAfter: PROGRESSION.xpForLevel(p.level), ...(xpParts ? { parts: xpParts } : {}) },
       mapName: this.mapDef.name,
       ...(zr ? { mode: 'zones', zones: zr } : {}),
+      ...(tr ? { mode: 'tower', tower: tr } : {}),
     };
     // your team on the podium
     const team = m.actors.filter((a) => a.team === myTeam);
@@ -1116,7 +1160,7 @@ class Game {
       m.updateController(dt);
       const sub = dt > 1 / 45 ? 2 : 1; // substep physics on slow frames
       for (let i = 0; i < sub; i++) m.update(dt / sub);
-      if (!m.paused) { G.projectiles.update(dt); G.subs.update(dt); G.specials.update(dt); }
+      if (!m.paused) { G.projectiles.update(dt); G.subs.update(dt); G.specials.update(dt); this.towerFx?.update(dt); }
       if (m.attract) this._updateAttract(dt);
       else if (m.state === 'playing' && m.local?.alive && this.rig.mode !== 'follow' && this.rig.mode !== 'path') this.rig.follow(m.local, true);
     }
@@ -1178,6 +1222,8 @@ class Game {
       const cam = this.rig.gameCam || G.camera;   // the player's ears stay with the player while the map is up
       G.audio.setListener(cam.position, cam.getWorldDirection(this._lf || (this._lf = new THREE.Vector3())), cam.up);
     }
+    // sfx-cues: every sub / special's positional loops and warnings follow the world (src/audio/cues.js)
+    G.cues?.update(dt, { quiet: setUp });
     // post uniforms (low-hp vignette)
     const g = this.R.grade.uniforms;
     const hpK = loc && m && !m.attract && loc.alive ? clamp(1 - loc.hp / 55, 0, 1) : 0;
@@ -1208,7 +1254,7 @@ class Game {
   // harbour soundscape: continuous sea wash + occasional gull cries out over the water
   _updateAmbience(dt) {
     if (!this._audioOn || !G.audio?.loop) return;
-    if (!this._amb) this._amb = G.audio.loop('harbor_ambience', { volume: 0.55 });
+    if (!this._amb || !this._amb.playing) this._amb = G.audio.loop('harbor_ambience', { volume: this._ambV ?? 0.55 });   // sfx-cues: (back if the engine ever had to drop it)
     // in the lobby's alley the harbour is only a distant wash (and no gulls overhead)
     const inSet = !!this.showcase?.fullFrame;
     this._ambV = damp(this._ambV ?? 0.55, inSet ? 0.12 : 0.55, 2, dt);
@@ -1294,11 +1340,11 @@ class Game {
     const t = { x: 0, y: 0 };
     for (const o of m.actors) {
       if (!o.alive) continue;
-      const tracked = o.team !== a.team && o.status.track > 0 && o.status.trackTeam === a.team;
-      if (o.team !== a.team && !o.isLocal) {
-        // enemies only show on the map when visible to your team (not submerged far away) — tracked ones always do
-        if (o.anim.form === 'swim' && !tracked) continue;
-      }
+      // enemies show on the map only while something reveals them to your team (game/reveal.js: located, standing in
+      // your ink, hurt by your ink and not in their own …); the ring marks the located ones
+      const why = o.team !== a.team ? revealedTo(o, a.team) : null;
+      if (o.team !== a.team && !why) continue;
+      const tracked = why === 'located';
       this.minimap.toCanvas(o.pos.x, o.pos.z, t);
       players.push({ x: t.x / this.minimap.w, y: t.y / this.minimap.h, team: o.team, isSelf: o.isLocal, yaw: -o.yaw + (this.minimap.flip ? Math.PI : 0), alive: o.alive, color: G.teamHex[o.team], tracked });
     }
@@ -1335,7 +1381,8 @@ class Game {
       else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = 'Low ink! Hold SHIFT in your ink to refill'; }
       else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = `Special ready! Press F`;
       else if (inkF < 0.25 && a.form !== 'squid') prompt = 'Hold SHIFT to swim in your ink and refill';
-      else if (m.duration - m.time < 8 && !this._hints.shot) prompt = m.zones ? 'Ink the zone and hold it to count down!' : 'Paint the ground — most turf wins!';
+      else if (m.tower?.homing && m.tower.owner === a.team && (this._hints.homeT = (this._hints.homeT || 0) + dt) < 4) prompt = 'Your tower rolls home by itself on your half — go defend it!';
+      else if (m.duration - m.time < 8 && !this._hints.shot) prompt = m.zones ? 'Ink the zone and hold it to count down!' : m.tower ? 'Ink the tower\'s side, swim up onto it and ride it into enemy territory!' : 'Paint the ground — most turf wins!';
       if (!a.specialReady()) this._hints.specialT = 0;
       if (a.intent.fire) this._hints.shot = true;
     }
@@ -1386,6 +1433,8 @@ class Game {
       fps: this.settings.showFps ? this.fps : undefined,
       // Zone Control: counts / penalties / the operational objective (HUD counters, objective chip, banners)
       zones: m.zones ? { ...m.zones.state(), viewer: a.team } : undefined,
+      // Tower Command: position / control / riders / checkpoints / scores (HUD meter, tower pointer, banners)
+      tower: m.tower ? { ...m.tower.state(), viewer: a.team, onTower: !!(m.tower.riderList && m.tower.riderList.includes(a)) } : undefined,
     };
     this.hud.update(dt, frame);
   }

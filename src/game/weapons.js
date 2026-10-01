@@ -8,7 +8,7 @@
 // blooms with sustained fire, recovers when you let go). Hit tests use the victim's visual (smoothed) body.
 import * as THREE from 'three';
 import { G, emit, clamp, lerp, smoothstep } from '../core/ctx.js';
-import { WEAPONS, SUB, SPECIALS, PLAYER } from '../config.js';
+import { WEAPONS, SUB, SPECIALS, PLAYER, subViewScale } from '../config.js';
 import { Physics, Hit } from './physics.js';
 import { MAIN_KITS, SUB_KITS } from './kits/registry.js';
 
@@ -25,6 +25,11 @@ const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), ZAX =
 const _hit = new Hit(), _hit2 = new Hit();
 const _res = { t: 0, dist: 0 };
 const DEG = Math.PI / 180;
+// sprout pods (src/game/pods.js): how much more a heavy single shot's splat counts toward a pod's meter than its ink
+// alone would (splat opts.pod) — so one full-charge charger shot or one roller flick fills a meter (tools/botlab/tests/pods.js
+// calibration); any other thrown drop (brush swipes, cutlass crescents, sprinkler spray) a little more too.
+// charger: × (1 + charger · charge²)
+export const POD_HINT = { charger: 4.5, flick: 7.5, drop: 1.6 };
 // trigger('shoot', HAND_*) arg for dual wield (character.js reads .hand; valueOf keeps numeric readers at 1)
 const HAND_R = Object.freeze({ hand: 0, valueOf() { return 1; } }), HAND_L = Object.freeze({ hand: 1, valueOf() { return 1; } });
 
@@ -58,6 +63,20 @@ export class WeaponRunner {
     MAIN_KITS[this.a?.weapon?.kind]?.reset?.(this);
   }
   onDeath() { this.reset(); }
+  // Swim pressed over the weapon (actor.js: the latest press of swim / fire / sub wins): let go of what the weapon is
+  // doing — a charge (no shot, no ink spent), a splatling / spinner stream, a flick / swing / slosh wind-up, the sub held
+  // ready to throw (not thrown). Dodge rolls and the post-roll turret keep the body (brief, committed moves); kit weapons
+  // cancel their own through MAIN_KITS[kind].cancel?(runner). True when anything was dropped.
+  cancelForSwim() {
+    let did = false;
+    if (this.charging) { this.charging = false; this.charge = 0; this.chargeT = 0; this.chargeLoop?.stop(0.05); this.chargeLoop = null; this.spinLoop?.stop(0.08); this.spinLoop = null; did = true; }   // (a splatling's charge hum is its spinLoop)
+    if (this.streaming || this.burstT > 0) { this.streaming = false; this.burstT = 0; this.burstPower = 0; this.spinLoop?.stop(0.08); this.spinLoop = null; did = true; }
+    if (this.flick >= 0) { this.flick = -1; did = true; }
+    if (this.slosh >= 0) { this.slosh = -1; did = true; }
+    if (this.aimingSub) { this.aimingSub = false; did = true; }
+    if (MAIN_KITS[this.a.weapon?.kind]?.cancel?.(this)) did = true;
+    return did;
+  }
   busy() { return this.charging || this.flick >= 0 || this.burstT > 0 || this.dodgeT > 0 || this.slosh >= 0 || this.streaming || !!this.dodge || this.lockT > 0 || !!MAIN_KITS[this.a.weapon?.kind]?.busy?.(this); }
   firingPose() { return this.firingT > 0 || this.charging || this.flick >= 0 || this.rolling || this.burstT > 0 || this.turret || this.slosh >= 0 || this.streaming || !!this.dodge || this.lockT > 0 || !!MAIN_KITS[this.a.weapon?.kind]?.firingPose?.(this); }
   moveSpeed() {
@@ -187,6 +206,7 @@ export class WeaponRunner {
       if (!this.charging) {
         if (a.ink < w.inkFull * 0.2) { this._empty(); return; }
         this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
+        this.chargeLoop?.stop(0.05);
         if (a.isLocal || a._nearCamera()) this.chargeLoop = G.audio?.loop('charger_charge', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.55 : 0.35, pitch: 1 });
       }
       const maxCharge = clamp(a.ink / w.inkFull, 0, 1);
@@ -245,6 +265,7 @@ export class WeaponRunner {
     if (canRoll !== this.rolling) {
       this.rolling = canRoll;
       if (canRoll) { this.lastRollPos = a.pos.clone(); this.rollDist = 0; }
+      this.rollLoop?.stop(0.05);
       if (canRoll && (a.isLocal || a._nearCamera())) this.rollLoop = G.audio?.loop('roll', { pos: a.isLocal ? undefined : a.pos, volume: 0 });
       if (!canRoll) { this.rollLoop?.stop(0.12); this.rollLoop = null; }
     }
@@ -409,6 +430,7 @@ export class WeaponRunner {
       if (!this.charging) {
         if (a.ink < w.inkPerShot * 5) { this._empty(); return; }
         this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
+        this.spinLoop?.stop(0.05);   // (never start a loop over a live one: an orphaned handle hums forever)
         if (a.isLocal || a._nearCamera()) this.spinLoop = G.audio?.loop('splatling_spin', { pos, volume: a.isLocal ? 0.6 : 0.4, pitch: 0.6 });
       }
       this.chargeT += dt;
@@ -464,6 +486,7 @@ Object.assign(WeaponRunner.prototype, {
       if (!this.charging) {
         if (a.ink < w.inkFull * 0.15) { this._empty(); return; }
         this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
+        this.chargeLoop?.stop(0.05);
         if (a.isLocal || a._nearCamera()) this.chargeLoop = G.audio?.loop('splatling_spin', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.6 : 0.4, pitch: 0.6 });
       }
       this.chargeT = Math.min(1, this.chargeT + dt / w.chargeTime);
@@ -593,6 +616,7 @@ Object.assign(WeaponRunner.prototype, {
     if (brushing !== this.rolling) {
       this.rolling = brushing;
       if (brushing) { this.lastRollPos = a.pos.clone(); this.rollHits.clear(); }
+      this.rollLoop?.stop(0.05);
       if (brushing && (a.isLocal || a._nearCamera())) this.rollLoop = G.audio?.loop('roll', { pos: a.isLocal ? undefined : a.pos, volume: 0 });
       if (!brushing) { this.rollLoop?.stop(0.1); this.rollLoop = null; }
     }
@@ -849,6 +873,7 @@ export class Projectiles {
     // pooled: clear the per-kind optional fields so nothing leaks from the projectile's previous life
     p.volley = null; p.belowFalloff = 0; p.belowFalloffMax = 0; p.burst = null; p.weaponId = null;
     p.delay = 0; p.head = false; p.wid = null; p.dmgFar = undefined; p.vol = null; p.sp = undefined; p.ghost = false;
+    p.pod = undefined;   // (a sprout pod's meter: how much this round's splat counts for — src/game/pods.js)
     // look (visual only; _draw falls back to size / defaults for anything left unset)
     p.vis = 0; p.tail0 = undefined; p.tailK = undefined; p.wob = undefined; p.wobF = 0; p.nose = 0; p.sats = 0;
     return p;
@@ -1223,7 +1248,7 @@ export class Projectiles {
       const p = this._new();
       // big globs in the middle of the sheet, smaller beads toward the edges (visual only: the hit size is unchanged)
       const mid = 1 - Math.abs(t);
-      Object.assign(p, { type: 'drop', owner: a, team: a.team, age: 0, life: 1.4, straight: 0, radius: 0.85 + Math.random() * 0.3, damage: w.flickDamageNear, dmgFar: w.flickDamageFar, size: 0.15, trail: 0, trailEvery: 1.8, trailRadius: 0.45, grav: 26, drag: 0.4, seed: Math.random(),
+      Object.assign(p, { type: 'drop', owner: a, team: a.team, age: 0, life: 1.4, straight: 0, radius: 0.85 + Math.random() * 0.3, damage: w.flickDamageNear, dmgFar: w.flickDamageFar, size: 0.15, trail: 0, trailEvery: 1.8, trailRadius: 0.45, grav: 26, drag: 0.4, seed: Math.random(), pod: POD_HINT.flick,
         vis: 0.1 + 0.085 * mid + Math.random() * 0.03, tail0: 0.4, tailK: 1.0, wob: 0.1, wobF: 19, nose: 0, sats: mid > 0.45 ? 2 : 1 });
       p.pos.set(m.x + fx * 0.6, m.y + 0.3, m.z + fz * 0.6); p.prev.copy(p.pos); p.start.copy(p.pos);
       const cu = Math.cos(up + (Math.random() - 0.5) * 0.12);
@@ -1272,7 +1297,7 @@ export class Projectiles {
     }
     if (hit.hit && !victim && !bossHit) {
       _v2.copy(hit.point).addScaledVector(hit.normal, 0.12);
-      area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6 });
+      area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6, pod: 1 + POD_HINT.charger * charge * charge });
       G.fx?.burst(hit.point, hit.normal, a.color, { count: 10, speed: 4, size: 0.09, paint: false });
       if (a.isLocal || a._nearCamera()) G.audio?.play('ink_hit_wall', { pos: hit.point, volume: 0.6 });
     }
@@ -1449,18 +1474,21 @@ export class Projectiles {
   throwBomb(a) {
     const b = SUB.bomb;
     const group = new THREE.Group();
+    // [sub-view] the ball is drawn SUB_VIEW_SCALE.bomb × bigger (visual only: its pos, bounce, rest height and blast are
+    // the physics bomb's) — `look` holds the model, `group` tumbles and pulses it; _updateBombs sits it on its surface
+    const vs = subViewScale('bomb'), look = new THREE.Group(); look.scale.setScalar(vs);
     const body = new THREE.Mesh(this.bombGeo, this._bombMat(a.team).clone());
     body.castShadow = true;
     const cap = new THREE.Mesh(this.bombCapGeo, new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.4, metalness: 0.6 }));
     cap.position.y = 0.2;
-    group.add(body, cap);
+    look.add(body, cap); group.add(look);
     const pos = _v.copy(a.pos); pos.y += 1.35;
     group.position.copy(pos);
     this.scene.add(group);
     const vel = this.throwVelocity(a, b.throwSpeed, new THREE.Vector3());
-    this.bombs.push({ kind: 'bomb', owner: a, team: a.team, mesh: group, body, pos: pos.clone(), vel, fuse: -1, age: 0, spin: new THREE.Vector3(Math.random() * 8, Math.random() * 8, 0), beepT: 0, sp: !!a.specialActive });
+    this.bombs.push({ kind: 'bomb', owner: a, team: a.team, mesh: group, body, pos: pos.clone(), vel, fuse: -1, age: 0, spin: new THREE.Vector3(Math.random() * 8, Math.random() * 8, 0), beepT: 0, sp: !!a.specialActive, vs });
     if (G.netm && !a.remote) G.netm.recBomb(this.bombs[this.bombs.length - 1]);
-    if (a.isLocal || a._nearCamera()) G.audio?.play('bomb_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.7 });
+    G.cues?.sub('bomb', 'throw', { owner: a, at: a.pos });   // sfx-cues (src/audio/cues.js: yours from you, theirs where they are)
     emit('bomb:throw', { actor: a, pos: pos.clone(), team: a.team, radius: SUB.bomb.radius });
   }
 
@@ -1489,7 +1517,7 @@ export class Projectiles {
     this._credit(b, area);
     G.subs?.damageArea(c, s.radius, 60, b.team);
     G.fx?.explosion(c, G.teamColors[b.team], s.radius);
-    G.audio?.play('bomb_explode', { pos: c });
+    G.cues?.sub('bomb', 'boom', { owner: b.owner, team: b.team, at: c });   // sfx-cues
     emit('shake', { pos: c.clone(), amount: 0.6 });
     emit('bomb:explode', { actor: b.owner, pos: c.clone(), team: b.team, radius: s.radius });
     const loc = G.local;
@@ -1535,7 +1563,7 @@ export class Projectiles {
     group.position.set(b.pos.x, groundY + 4.6, b.pos.z);
     group.scale.setScalar(0.01);
     this.scene.add(group);
-    const loop = G.audio?.loop('storm_rain', { pos: group.position, volume: 0.6 });
+    const loop = null;   // sfx-cues: the rain loop follows the cloud from src/audio/cues.js (it never outlives it)
     this.clouds.push({ owner: b.owner, team: b.team, group, t: 0, dur: sp.duration, dir: b.dir, rainT: 0, loop, groundY });
     G.audio?.play('storm_thunder', { pos: group.position });
     emit('storm:start', { pos: group.position.clone(), team: b.team, actor: b.owner, radius: sp.radius });
@@ -1673,9 +1701,9 @@ export class Projectiles {
     if (sloshr) {
       // the wave lands as a thick stripe along its travel: stretched along the horizontal heading
       _dir.y = 0; if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, 1); _dir.normalize();
-      area = G.paint.splat(_v, rad * 1.12, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 1.25 });
+      area = G.paint.splat(_v, rad * 1.12, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 1.25, pod: p.pod });
       if (p.head) this._sloshSplash(p, hit.point, null);
-    } else area = G.paint.splat(_v, rad, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 0.7 });
+    } else area = G.paint.splat(_v, rad, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 0.7, pod: p.pod ?? (p.type === 'drop' ? POD_HINT.drop : undefined) });
     this._credit(p, area);
     if (p.type !== 'blast') emit('weapon:impact', { pos: hit.point.clone(), normal: hit.normal.clone(), team: p.team, kind: p.type === 'drop' || sloshr ? 'drop' : 'shot', radius: rad });
     const near = p.owner.isLocal || G.camera.position.distanceToSquared(hit.point) < 22 * 22;
@@ -1691,7 +1719,7 @@ export class Projectiles {
     const w = b ? { burstRadius: b.radius, impactRadius: b.paint ?? b.radius * 0.6, splashRadius: b.splashRadius, splashDamageMax: b.dmgMax, splashDamageMin: b.dmgMin } : WEAPONS.blaster;
     const c = at.clone();
     G.fx?.explosion(c, p.owner.color, w.burstRadius);
-    G.audio?.play('blaster_boom', { pos: c, volume: 0.7 });
+    G.audio?.play(p.weaponId === 'jetpack' ? 'jet_boom' : 'blaster_boom', { pos: c, volume: 0.7 });   // sfx-cues: the Ink Jet's shots land with their own boom
     emit('weapon:impact', { pos: c.clone(), normal: new THREE.Vector3(0, 1, 0), team: p.team, kind: 'blast', radius: w.burstRadius });
     // paint under the burst
     const g = G.physics.raycast(_v2.copy(c).setY(c.y + 0.2), DOWN, 3.5, _hit2);
@@ -1733,7 +1761,7 @@ export class Projectiles {
         b.vel.multiplyScalar(hit.normal.y > 0.6 ? 0.45 : 0.6);
         if (hit.normal.y > 0.6 && b.fuse < 0) {
           b.fuse = SUB.bomb.fuse;
-          G.audio?.play('bomb_beep', { pos: b.pos, volume: 0.6 });
+          G.cues?.sub('bomb', 'land', { owner: b.owner, team: b.team, at: b.pos });   // sfx-cues: armed (the fuse loop: src/audio/cues.js)
           emit('bomb:arm', { actor: b.owner, pos: b.pos.clone(), team: b.team, radius: SUB.bomb.radius });
         }
       }
@@ -1744,16 +1772,27 @@ export class Projectiles {
         const k = 1 - b.fuse / SUB.bomb.fuse;
         b.body.material.emissiveIntensity = (Math.sin(b.age * (10 + k * 30)) * 0.5 + 0.5) * (0.4 + k * 1.8);
         b.mesh.scale.setScalar(1 + k * 0.35 + Math.sin(b.age * 40) * 0.03 * k);
-        if (b.beepT <= 0) {
-          b.beepT = 0.3 - k * 0.2;
-          if (G.camera.position.distanceToSquared(b.pos) < 30 * 30) G.audio?.play('bomb_beep', { pos: b.pos, volume: 0.35 + k * 0.4, pitch: 1 + k * 0.25 });
-        }
+        if (b.beepT <= 0) b.beepT = 0.3 - k * 0.2;   // sfx-cues: the fuse ticks are the fuse_bomb loop now (src/audio/cues.js)
         if (b.fuse <= 0) { const nm = G.netm; if (b.ghost && nm) nm.mute++; try { this._explodeBomb(b); } finally { if (b.ghost && nm) nm.mute--; } this.scene.remove(b.mesh); this.bombs.splice(i, 1); continue; }
       }
       if (b.pos.y < PLAYER.waterY - 1.8) { this.scene.remove(b.mesh); this.bombs.splice(i, 1); continue; }
       b.mesh.position.copy(b.pos);
-      b.mesh.rotation.x += b.spin.x * dt * (b.fuse < 0 ? 1 : 0.2);
-      b.mesh.rotation.z += b.spin.y * dt * (b.fuse < 0 ? 1 : 0.2);
+      // [sub-view] armed (it has landed), the drawn ball — radius 0.2 × vs × the fuse pulse — sits ON the floor under it:
+      // its centre that far up (the physics centre sits 0.21 up and, resting, bobs 0.03–0.21 as it settles: the drawn
+      // one doesn't), and resting it stands cap-up rather than rolling on the spot (the bigger cap would dip into the floor)
+      let rest = false;
+      if (b.vs && b.fuse >= 0) {
+        const br = 0.2 * b.vs * b.mesh.scale.x, g = G.physics.raycast(b.pos, DOWN, br * 2 + 0.25, _hit2);
+        if (g.hit && g.normal.y > 0.6) {
+          const want = br / g.normal.y;
+          if (g.dist < want) b.mesh.position.y += want - g.dist;
+          if ((rest = g.dist < 0.3)) { _q.setFromUnitVectors(UP, g.normal); b.mesh.quaternion.slerp(_q, 1 - Math.exp(-10 * dt)); }
+        }
+      }
+      if (!rest) {
+        b.mesh.rotation.x += b.spin.x * dt * (b.fuse < 0 ? 1 : 0.2);
+        b.mesh.rotation.z += b.spin.y * dt * (b.fuse < 0 ? 1 : 0.2);
+      }
     }
   }
 

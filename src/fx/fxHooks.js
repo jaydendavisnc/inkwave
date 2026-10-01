@@ -561,7 +561,7 @@ class FxHooks {
         }
         const k = clamp(1 - b.fuse / fuse0, 0, 1);
         fx.dangerRing?.(_v.copy(r.gp).addScaledVector(r.gn, 0.02), r.gn, col, R, k);
-        if ((b.beepT || 0) > r.beepT + 1e-4) { fx.beepPulse?.(b.pos, r.gp, r.gn, col, R, k); this._bump('bombBeep'); }
+        if ((b.beepT || 0) > r.beepT + 1e-4) { fx.beepPulse?.(b.mesh?.position || b.pos, r.gp, r.gn, col, R, k); this._bump('bombBeep'); }   // ([sub-view] the glow on the drawn ball's middle)
       }
       r.beepT = b.beepT || 0; r.vy = b.vel.y;
     }

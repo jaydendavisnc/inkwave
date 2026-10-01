@@ -5,7 +5,7 @@
 // sends one roster to everyone; every client builds the stage, reports ready, and the host says go — so intros start
 // together. In the match NetMatch (netmatch.js) does the replication.
 import { G, emit } from '../core/ctx.js';
-import { MAPS, WEAPONS, WEAPON_ORDER, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER, MATCH, ZONES, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
+import { MAPS, WEAPONS, WEAPON_ORDER, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER, MATCH, ZONES, TOWER, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
 import { randomStyle } from '../game/character-style.js';
 import { Transport } from './transport.js';
 import { NetMatch } from './netmatch.js';
@@ -56,8 +56,8 @@ export class NetSession {
   _blankLobby() {
     const g = G.game;
     // palette: the room's team colours (index into TEAM_PALETTES) — the host's current menu colours carry into the room
-    // mode: 'turf' | 'zones' (Zone Control: the host runs the rules — zones.js) | 'boss' (Boss Battle: everyone is one
-    // squad vs HULLBREAKER — docs/BOSS.md)
+    // mode: 'turf' | 'zones' (Zone Control: the host runs the rules — zones.js) | 'tower' (Tower Command: likewise —
+    // tower.js) | 'boss' (Boss Battle: everyone is one squad vs HULLBREAKER — docs/BOSS.md)
     const map = g?.mapDef?.id || MAPS[0].id;
     return { map, time: g?.time || 'day', duration: g?.settings?.matchLength || MATCH.defaultDuration, bots: !mapNoBots(map), difficulty: g?.settings?.difficulty || 'normal', palette: g?.paletteIndex?.() ?? 0, mode: 'turf', players: [], maxPlayers: TEAM * 2 };
   }
@@ -241,7 +241,7 @@ export class NetSession {
     if (s.bots != null) this._botsPref = !!s.bots;
     if (s.difficulty && ['easy', 'normal', 'hard'].includes(s.difficulty)) l.difficulty = s.difficulty;
     if (Number.isInteger(s.palette) && s.palette >= 0 && s.palette < TEAM_PALETTES.length) l.palette = s.palette;
-    if (s.mode === 'turf' || s.mode === 'zones' || s.mode === 'boss') l.mode = s.mode;
+    if (s.mode === 'turf' || s.mode === 'zones' || s.mode === 'tower' || s.mode === 'boss') l.mode = s.mode;
     // stage rules (config MAPS flags): a Boss Battle never runs on a noBoss stage — picking one in boss mode is refused,
     // switching a room on one to boss mode moves it to a boss-eligible stage; a noBots stage forces bots off (the host's
     // own choice comes back on the next stage)
@@ -288,8 +288,9 @@ export class NetSession {
         }
       }
     }
-    // (Zone Control always runs its own 5:00 + overtime, as offline)
-    const cfg = { k: 'start', roster, map: l.map, time: l.time, duration: !boss && l.mode === 'zones' ? ZONES.duration : l.duration, difficulty: l.difficulty, palette: l.palette, mode: boss ? 'boss' : l.mode === 'zones' ? 'zones' : 'turf', host: this.myId, id: Math.random().toString(36).slice(2, 8) };
+    // (Zone Control and Tower Command always run their own 5:00 + overtime, as offline)
+    const mode = boss ? 'boss' : l.mode === 'zones' || l.mode === 'tower' ? l.mode : 'turf';
+    const cfg = { k: 'start', roster, map: l.map, time: l.time, duration: mode === 'zones' ? ZONES.duration : mode === 'tower' ? TOWER.duration : l.duration, difficulty: l.difficulty, palette: l.palette, mode, host: this.myId, id: Math.random().toString(36).slice(2, 8) };
     this.tr.lock(true);
     this.tr.broadcast(cfg);
     this._begin(cfg);
@@ -361,7 +362,7 @@ export class NetSession {
           const l = d.l;
           this.lobby.map = l.map; this.lobby.time = l.time; this.lobby.duration = l.duration; this.lobby.bots = l.bots; this.lobby.difficulty = l.difficulty;
           if (Number.isInteger(l.palette)) this.lobby.palette = l.palette;
-          this.lobby.mode = l.mode === 'boss' || l.mode === 'zones' ? l.mode : 'turf';
+          this.lobby.mode = l.mode === 'boss' || l.mode === 'zones' || l.mode === 'tower' ? l.mode : 'turf';
           const prev = new Map(this.lobby.players.map((p) => [p.id, p]));
           this.lobby.players = l.players.map((p) => ({ ...p, host: p.id === this.hostId }));
           for (const p of this.lobby.players) if (!prev.has(p.id)) this._emit('join', { player: p });

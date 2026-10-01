@@ -18,6 +18,7 @@ export class Level {
     this.blocks = [];
     this.faces = [];
     this._stamp = 1;
+    this.dyn = [];              // moving collision boxes (Tower Command's tower): outside the hash, checked by every query
     this._build();
   }
 
@@ -122,7 +123,7 @@ export class Level {
   _hxi(x) { return Math.max(0, Math.min(this.hw - 1, Math.floor((x - this.hx0) / this.hashCell))); }
   _hzi(z) { return Math.max(0, Math.min(this.hd - 1, Math.floor((z - this.hz0) / this.hashCell))); }
 
-  // Unique block ids whose hash cells overlap the XZ rectangle.
+  // Unique block ids whose hash cells overlap the XZ rectangle (plus any moving block whose AABB does).
   queryBlocks(minX, minZ, maxX, maxZ, out) {
     out.length = 0;
     const st = ++this._stamp;
@@ -134,7 +135,38 @@ export class Level {
         if (this.blockStamp[id] !== st) { this.blockStamp[id] = st; out.push(id); }
       }
     }
+    for (let i = 0; i < this.dyn.length; i++) {
+      const b = this.dyn[i];
+      if (b.aabbMax.x >= minX && b.aabbMin.x <= maxX && b.aabbMax.z >= minZ && b.aabbMin.z <= maxZ) out.push(b.id);
+    }
     return out;
+  }
+
+  // ---------------------------------------------------------------- moving blocks
+  // A collision-only box that moves (never drawn, never inked — the mesh is its owner's): d as a 'box' def's flags.
+  // Moving blocks sit after the stage's own, so clearDynamic() takes them all off again (match end).
+  addDynamic(d = {}) {
+    this._addBlock({ kind: 'box', min: [0, 0, 0], max: [1, 1, 1], color: '#888888', ...d, paint: false, hidden: true });
+    const b = this.blocks[this.blocks.length - 1];
+    b.dynamic = true;
+    this.dyn.push(b);
+    if (this.blockStamp.length < this.blocks.length) { const s = new Uint32Array(this.blocks.length + 8); s.set(this.blockStamp); this.blockStamp = s; }
+    return b;
+  }
+  // place a moving block: centre, half extents, turned `yaw` about the vertical (its local z along (sin yaw, cos yaw))
+  moveDynamic(b, center, half, yaw = 0) {
+    b.center.copy(center);
+    if (half) b.half.copy(half);
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    b.axes[0].set(c, 0, -s); b.axes[1].set(0, 1, 0); b.axes[2].set(s, 0, c);
+    const ex = Math.abs(c) * b.half.x + Math.abs(s) * b.half.z, ez = Math.abs(s) * b.half.x + Math.abs(c) * b.half.z;
+    b.aabbMin.set(b.center.x - ex, b.center.y - b.half.y, b.center.z - ez);
+    b.aabbMax.set(b.center.x + ex, b.center.y + b.half.y, b.center.z + ez);
+  }
+  clearDynamic() {
+    if (!this.dyn.length) return;
+    this.blocks.length = this.dyn[0].id;
+    this.dyn.length = 0;
   }
 
   pointInBlock(b, p, pad = 0) {

@@ -9,11 +9,17 @@
 // point-symmetric about the slab centre: each feature is drawn in Alpha world metres and again turned 180°
 // (its twin lands under boxes / buildings, or is the marking the other half needs anyway).
 // (All in the berth's LOCAL frame — layout.js turns the slabs 35°; a turned slab's top face keeps the same u / v.)
-//   4  Block 4A yard slab (x 6 … 16.16, z −31.6 … −7): slot outlines, block boundary
-//   5  truck lane slab (x −6 … 6, z −31.6 … −7): yellow edges, dashed centre, arrows, 20 km/h roundels, crossings
-//   6  apron slabs (7.84 × 47.4, both flanks): quay edge line + walkway bands (symmetric in u as well: the two Alpha
+// The Long Stages stretch (layout.js STRETCH) carried the lane and yard slabs on through the slice to the moved base
+// apron (z −54.6 … −7): their centres now sit close to the cut, so each feature of the old section has its twin in the
+// slice and the other way round — the drawings below keep that in mind (the lane's zebra doubles across the cut,
+// Block 4A's slot rows repeat under Block 4B, the power strip's twin is the RTG runway's keep-clear edge; slice
+// features whose twins would show in the old section are left out).
+//   4  Block 4A / 4B yard slab (x 6 … 16.16, z −54.6 … −7): slot outlines, block boundary, RTG 41's runway
+//   5  truck lane slab (x −6 … 6, z −54.6 … −7): yellow edges, dashed centre, arrows, 20 km/h roundels, crossings
+//   6  apron slabs (7.84 × 64, both flanks): quay edge line + walkway bands (symmetric in u as well: the two Alpha
 //      aprons see the canvas mirrored to each other)
-//   7  base slab (x ±16.16, z −47.4 … −31.6): zebra crossing at the ops stair, walkway band, stop lines at the gate
+//   7  base slab (x ±16.16, z −47.4 … −31.6 as drawn; moved out with the base): zebra crossing at the ops stair,
+//      walkway band, stop lines at the gate
 //   8  reefer block slab (x −16.16 … −6): slot ends, alley walkway
 //   9  KRAKEN LINES (40' long sides)  10  TIDEBANK (40')
 //   11 the Landing (single slab x ±16.16, z ±7, drawn once): the round crane working zone, KEEP CLEAR, box slots,
@@ -124,20 +130,26 @@ export function drawMurals(g, R, kit) {
 
   // ---------------------------------------------------------------- 4: Block 4A slab (tarmac)
   {
-    const r = rect(0, 0, 320, 775), slab = { minX: 6.0, maxX: 16.16, minZ: -31.6, maxZ: -7 };
+    const r = rect(0, 0, 280, 1008), slab = { minX: 6.0, maxX: 16.16, minZ: -54.6, maxZ: -7 };
     onSlab(g, r, slab, (g) => {
       // block boundary: yellow lines along the lane + apron edges
       g.fillStyle = YELLOW;
       for (const x of [6.12, 16.04]) g.fillRect(x - 0.06, -31.5, 0.12, 24.4);
-      // slot outlines: four rows × four 20' slots (6.15 m) from the base end
-      for (let k = 0; k < 4; k++) for (let r0 = 0; r0 < 4; r0++) slotOutline(g, 6.0 + r0 * 2.54 + 0.1, -31.6 + k * 6.15 + 0.1, 6.0 + (r0 + 1) * 2.54 - 0.1, -31.6 + (k + 1) * 6.15 - 0.1, WHITE, 0.09);
+      // slot outlines: rows 0–2 × four 20' slots (6.15 m) from the base end (row 3's lie under its wall; its twin strip is
+      // RTG 41's runway in the slice — the others' twins fall under Block 4B and in cross aisle C)
+      for (let k = 0; k < 4; k++) for (let r0 = 0; r0 < 3; r0++) slotOutline(g, 6.0 + r0 * 2.54 + 0.1, -31.6 + k * 6.15 + 0.1, 6.0 + (r0 + 1) * 2.54 - 0.1, -31.6 + (k + 1) * 6.15 - 0.1, WHITE, 0.09);
+      // RTG 41's runway beside the lane (row 0's strip in the slice): tyre track lines, hatched stop ends, its number
+      // (twins under 4A's row-3 wall)
+      for (const x of [6.3, 8.3]) g.fillRect(x - 0.07, -54.4, 0.14, 17.2);
+      for (const z of [-47.4, -37.8]) hatchBox(g, 6.4, z - 0.5, 8.2, z + 0.5, YELLOW, 0.4, 0.1);
+      groundText(g, 'RTG 41', 7.3, -51.6, 0.5, YELLOW, { rot: -PI / 2 });
     });
-    wear(g, r, { flecks: 1900, scuffs: 40, seed: 41 });
-    out.push({ id: 4, ...r, place: [0, 10.16, 0, 24.6], fx: [0.9, 1] });
+    wear(g, r, { flecks: 3400, scuffs: 70, seed: 41 });
+    out.push({ id: 4, ...r, place: [0, 10.16, 0, 47.6], fx: [0.9, 1] });
   }
   // ---------------------------------------------------------------- 8: Reefer block slab (tarmac)
   {
-    const r = rect(320, 0, 320, 775), slab = { minX: -16.16, maxX: -6.0, minZ: -31.6, maxZ: -7 };
+    const r = rect(280, 0, 280, 1008), slab = { minX: -16.16, maxX: -6.0, minZ: -54.6, maxZ: -7 };
     onSlab(g, r, slab, (g) => {
       g.fillStyle = YELLOW;
       for (const x of [-6.12, -16.04]) g.fillRect(x - 0.06, -31.5, 0.12, 24.4);
@@ -148,15 +160,19 @@ export function drawMurals(g, R, kit) {
       g.fillStyle = 'rgba(88,150,96,0.55)'; g.fillRect(-10.2, -31.4, 1.5, 24.2);
       g.fillStyle = WHITE; for (const x of [-10.26, -8.62]) g.fillRect(x - 0.04, -31.4, 0.08, 24.2);
       for (let z = -29; z < -8; z += 5) groundText(g, 'WALK', -9.45, z, 0.32, 'rgba(238,236,228,0.75)');
-      // power strip along the apron edge: hatched keep-clear
+      // power strip along the apron edge: hatched keep-clear (its twin: the keep-clear edge of RTG 41's runway)
       hatchBox(g, -16.1, -30.5, -15.45, -8, YELLOW, 0.5, 0.1);
+      // RTG 41's runway on this side (twins under R2's row 2)
+      g.fillStyle = YELLOW;
+      for (const x of [-8.3, -6.3]) g.fillRect(x - 0.07, -54.4, 0.14, 17.2);
+      for (const z of [-47.4, -37.8]) hatchBox(g, -8.2, z - 0.5, -6.4, z + 0.5, YELLOW, 0.4, 0.1);
     });
-    wear(g, r, { flecks: 1900, scuffs: 40, seed: 43 });
-    out.push({ id: 8, ...r, place: [0, 10.16, 0, 24.6], fx: [0.9, 1] });
+    wear(g, r, { flecks: 3400, scuffs: 70, seed: 43 });
+    out.push({ id: 8, ...r, place: [0, 10.16, 0, 47.6], fx: [0.9, 1] });
   }
   // ---------------------------------------------------------------- 5: truck lane slab (tarmac)
   {
-    const r = rect(640, 0, 380, 780), slab = { minX: -6, maxX: 6, minZ: -31.6, maxZ: -7 };
+    const r = rect(560, 0, 340, 1008), slab = { minX: -6, maxX: 6, minZ: -54.6, maxZ: -7 };
     onSlab(g, r, slab, (g) => {
       // tyre polish in the two running lanes
       g.fillStyle = DARK;
@@ -166,37 +182,38 @@ export function drawMurals(g, R, kit) {
       for (const x of [-5.7, 5.7]) g.fillRect(x - 0.08, -31.6, 0.16, 24.6);
       g.fillStyle = WHITE;
       for (let z = -28.3; z < -7; z += 6) g.fillRect(-0.07, z, 0.14, 3);
-      // the lane to the player's right runs toward mid: arrow + 20 km/h roundel (the twin serves the other lane)
-      arrowZ(g, -3, -22.5, 4.2, WHITE);
-      roundel(g, -3, -27.4, 1.0, '20');
+      // the lane to the player's right runs toward mid: arrow + 20 km/h roundel (the twins serve the other lane — the
+      // arrow's beside the transfer platform in the slice, the roundel at its stair foot in cross aisle C)
+      arrowZ(g, -4.4, -22.5, 4.2, WHITE);
+      roundel(g, -3.4, -27.4, 1.0, '20');
       // pedestrian crossing at the base end
       for (let x = -5.2; x < 5.3; x += 0.9) g.fillRect(x, -31.2, 0.5, 2.4);
     });
-    wear(g, r, { flecks: 3200, scuffs: 70, seed: 45 });
-    out.push({ id: 5, ...r, place: [0, 12, 0, 24.6], fx: [0.9, 1] });
+    wear(g, r, { flecks: 5600, scuffs: 120, seed: 45 });
+    out.push({ id: 5, ...r, place: [0, 12, 0, 47.6], fx: [0.9, 1] });
   }
   // ---------------------------------------------------------------- 6: apron slabs (quay concrete)
   {
-    const r = rect(1020, 0, 168, 1000), slab = { minX: 16.16, maxX: 24, minZ: -41, maxZ: 0 };
+    const r = rect(900, 0, 160, 1008), slab = { minX: 16.16, maxX: 24, minZ: -64, maxZ: 0 };
     onSlab(g, r, slab, (g) => {
       // mirrored in u too (the two Alpha aprons read the canvas mirrored): every feature has an x-twin
       for (const m of [1, -1]) {
         const X = (x) => (m > 0 ? x : 40.16 - x);
         // quay edge line (yellow) + white safety line 1 m in
-        g.fillStyle = YELLOW; g.fillRect(Math.min(X(23.55), X(23.75)), -40.9, 0.2, 40.8);
+        g.fillStyle = YELLOW; g.fillRect(Math.min(X(23.55), X(23.75)), -63.9, 0.2, 63.8);
         g.fillStyle = WHITE;
-        for (let z = -40.4; z < -0.5; z += 2.5) g.fillRect(Math.min(X(22.7), X(22.82)), z, 0.12, 1.5);
+        for (let z = -63.4; z < -0.5; z += 2.5) g.fillRect(Math.min(X(22.7), X(22.82)), z, 0.12, 1.5);
       }
       // crane parking marks: hatched boxes where the crane's bogies stop (both ends, mid side)
       hatchBox(g, 17.6, -2.4, 18.6, -0.2, YELLOW, 0.4, 0.1);
       hatchBox(g, 21.56, -2.4, 22.56, -0.2, YELLOW, 0.4, 0.1);
     });
-    wear(g, r, { flecks: 2000, scuffs: 40, seed: 47 });
-    out.push({ id: 6, ...r, place: [0, 7.84, 0, 41], fx: [0.9, 1] });
+    wear(g, r, { flecks: 3100, scuffs: 60, seed: 47 });
+    out.push({ id: 6, ...r, place: [0, 7.84, 0, 64], fx: [0.9, 1] });
   }
   // ---------------------------------------------------------------- 7: base slab (quay concrete)
   {
-    const r = rect(1190, 0, 840, 410), slab = { minX: -16.16, maxX: 16.16, minZ: -47.4, maxZ: -31.6 };
+    const r = rect(1060, 0, 840, 410), slab = { minX: -16.16, maxX: 16.16, minZ: -47.4, maxZ: -31.6 };   // (drawn where it stood: the slab moved as a whole)
     onSlab(g, r, slab, (g) => {
       // zebra crossing across the base aisle at the foot of the ops stair, walkway band along the building front
       g.fillStyle = WHITE;
@@ -225,7 +242,7 @@ export function drawMurals(g, R, kit) {
     out.push({ id, ...r, place, fx: [0.8, 1] });
   };
   const cream = 'rgba(244,240,230,0.94)';
-  logo(9, 1190, 420, 600, 150, [2.3, 7.6, 0.6, 1.9], (g, w, h) => {
+  logo(9, 1060, 420, 600, 150, [2.3, 7.6, 0.6, 1.9], (g, w, h) => {
     // KRAKEN LINES: a squid roundel + wordmark
     g.fillStyle = cream; g.beginPath(); g.arc(70, h / 2, 58, 0, PI * 2); g.fill();
     kit.squid(g, 70, h / 2 + 12, 0.78, 'rgba(60,70,90,0.9)', cream);
@@ -237,7 +254,7 @@ export function drawMurals(g, R, kit) {
     g.fillText('LINES', 6, 138);
     g.restore();
   });
-  logo(10, 1190, 580, 600, 150, [2.3, 7.6, 0.55, 1.9], (g, w, h) => {
+  logo(10, 1060, 580, 600, 150, [2.3, 7.6, 0.55, 1.9], (g, w, h) => {
     // TIDEBANK: wave swoosh + italic wordmark
     g.strokeStyle = cream; g.lineWidth = 16; g.lineCap = 'round';
     g.beginPath(); for (let i = 0; i <= 30; i++) { const x = 20 + i * 4, y = 88 + Math.sin(i / 30 * PI * 2) * 22; if (i) g.lineTo(x, y); else g.moveTo(x, y); } g.stroke();
@@ -249,7 +266,7 @@ export function drawMurals(g, R, kit) {
   });
   // ---------------------------------------------------------------- 11: the Landing (single slab, drawn once)
   {
-    const r = rect(0, 785, 1020, 220), sl = { minX: -16.16, maxX: 16.16, minZ: -7, maxZ: 7 };
+    const r = rect(1060, 740, 988, 268), sl = { minX: -16.16, maxX: 16.16, minZ: -7, maxZ: 7 };
     const sx = r.w / (sl.maxX - sl.minX), sz = r.h / (sl.maxZ - sl.minZ);
     g.save();
     g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip();

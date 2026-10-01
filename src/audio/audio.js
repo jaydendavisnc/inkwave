@@ -2,9 +2,12 @@
 //
 //   import { audio } from './audio.js';
 //   audio.init()                                   // idempotent; call from a user gesture (also inits music)
-//   audio.setVolumes({ master, music, sfx })       // 0..1 each (perceptual taper)
+//   audio.setVolumes({ master, music, sfx, cues })  // 0..1 each (perceptual taper); cues 0..1.5 (the sub / special cue
+//                                                  bus: 1 = the default cue mix, CUE_BOOST over the other SFX)
 //   audio.setListener(pos, forward, up)            // THREE.Vector3-like {x,y,z}; every frame
-//   audio.play(name, { pos, volume = 1, pitch = 1 })   // one-shot; pos → 3D (HRTF, inverse distance) else 2D
+//   audio.play(name, { pos, volume = 1, pitch = 1, ref })   // one-shot; pos → 3D (HRTF, inverse distance from `ref` m,
+//                                                  default the def's ref or 3) else 2D; { cue: true, post } — a cue one-shot
+//                                                  scaled by post (0 … 1) AFTER the cue compressor (a teammate's sub blast)
 //   const h = audio.loop(name, { pos, volume, pitch }); h.set({ volume, pitch, pos, params }); h.stop(fade = 0.15)
 //                                                  (params: loops with extra controls, e.g. zone_hum { mode, tension })
 //   audio.duck(amount = 0.5, seconds = 1.2)        // temporarily lowers the music bus
@@ -13,6 +16,8 @@
 // factor (≈0.6..1.6), volume ≈ speed / maxSpeed. judge_drumroll works as a 3 s one-shot (play) or open loop (loop).
 //
 // Graph: voices → [lowpass(distance) → panner] → sfxIn → sfxBus ─┐
+//        cue voices (isCue) → cueBus (the Cues slider) → cueComp ─→ sfxIn   (loops: → loopIn / cueLoopIn first)
+//        cue one-shots with post < 1 → cuePost (its twin) → cuePostComp → cuePostOut (× post) → sfxIn
 //        voices → reverb send → convolver (plaza IR) → sfxBus     ├→ master → glue comp → limiter → destination
 //        music.js → musicBus → duck ─────────────────────────────┘
 // Every builder works on any BaseAudioContext so tools/audio-test.mjs renders them through OfflineAudioContext.
@@ -22,9 +27,25 @@ import {
   V, music as musicSingleton, makeImpulse, mulberry32, mtof, perc, ahr, adsr, pts, sweep, strokeWave, pulseWave,
   kick, snare, crash, tom, brass, bell, pad, bass,
 } from './music.js';
+import { defineCueSounds, CUE_GROUPS } from './sfx-cues.js';   // sfx-cues: every sub / special's own sounds (src/audio/cues.js plays them)
+import { defineAlertSounds, ALERT_GROUPS } from './sfx-alerts.js';   // sfx-loud: the flight glides, the special alerts / alarms / stings
 
 const MAX_VOICES = 48;   // one-shots alive at once (oldest stolen beyond this)
-const MAX_LOOPS = 24;
+const MAX_LOOPS = 32;   // sfx-cues: the cue director keeps up to 13 of its own (src/audio/cues.js) beside the weapons', zones' and ambience's
+// sfx-loud: the sub / special cues sit this far over the rest of the SFX at the Cues slider's 100 % (+6 dB: "they all
+// need to be louder", 2026-10-01); a gentle compressor on the cue bus keeps a pile of them from clipping or getting harsh
+export const CUE_BOOST = 2;
+const cueGain = (v) => CUE_BOOST * Math.pow(Math.min(1.5, Math.max(0, +v || 0)), 1.5);
+// which sounds ride the cue bus: whatever the director plays (o.cue), and every sub's and special's own sound that game
+// code plays itself (a Vortex Strike's launch, a Cheer Orb's blast, a kit sub's bounce …) — not a Crab Rig's gatling
+// (a gun, like the other weapons)
+let CUE_SET = null;
+const KIT_CUE = /^(torpedo|tracer|boomerang|waddle|shaker)_/, NOT_CUE = new Set(['crab_gatling']);
+export function isCue(name) {
+  if (!CUE_SET) CUE_SET = new Set([...SFX_GROUPS.Subs, ...SFX_GROUPS.Specials, ...SFX_GROUPS.Flight, ...SFX_GROUPS['Special alerts'], ...SFX_GROUPS['Special stings'],
+    'bomb_throw', 'bomb_beep', 'bomb_explode', 'special_slam', 'storm_rain', 'storm_thunder']);
+  return (CUE_SET.has(name) || KIT_CUE.test(name)) && !NOT_CUE.has(name);
+}
 const taper = (v) => Math.pow(Math.min(1, Math.max(0, +v || 0)), 1.5);
 const validPos = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z);
 const distCut = (d) => (d < 10 ? 22000 : Math.max(900, 22000 * Math.pow(0.5, (d - 10) / 13)));
@@ -91,7 +112,7 @@ export class AudioEngine {
     this.opts = opts;
     this.ctx = null; this.ready = false; this.offline = false;
     this.hrtf = opts.hrtf ?? true;
-    this.vol = { master: DEFAULT_SETTINGS.master ?? 0.8, music: DEFAULT_SETTINGS.music ?? 0.6, sfx: DEFAULT_SETTINGS.sfx ?? 0.85 };
+    this.vol = { master: DEFAULT_SETTINGS.master ?? 0.8, music: DEFAULT_SETTINGS.music ?? 0.6, sfx: DEFAULT_SETTINGS.sfx ?? 0.85, cues: DEFAULT_SETTINGS.cues ?? 1 };
     this.byName = new Map(); this.voices = []; this.loops = new Set(); this.last = new Map();
     this.L = { x: 0, y: 0, z: 0 };
     this.rng = opts.seed != null ? mulberry32(opts.seed) : Math.random;
@@ -117,9 +138,32 @@ export class AudioEngine {
     this.duckG = g(1);
     this.sfxIn = g(1);
     this.sfxIn.connect(this.sfxBus); this.sfxBus.connect(this.master);
+    // looping sounds (weapon charge / spin hums, rolls, stage machinery …) join the SFX through their own bus, so a pause
+    // can hush every one of them at once (pauseLoops) and bring them back where they were
+    this.loopIn = g(1);
+    this.loopIn.connect(this.sfxIn);
     this.musicBus.connect(this.duckG); this.duckG.connect(this.master);
-    // shared plaza reverb
+    // the sub / special cue bus (src/audio/cues.js plays with o.cue): its own volume (the Cues slider, CUE_BOOST over the
+    // other SFX at 100 %) and a gentle compressor — a crowd of warnings and blasts stays clean, never clips; its loops
+    // pause with the rest (cueLoopIn)
+    this.cueBus = g(cueGain(this.vol.cues));
+    this.cueComp = ctx.createDynamicsCompressor();
+    this.cueComp.threshold.value = -10; this.cueComp.knee.value = 8; this.cueComp.ratio.value = 4; this.cueComp.attack.value = 0.004; this.cueComp.release.value = 0.2;
+    this.cueBus.connect(this.cueComp); this.cueComp.connect(this.sfxIn);
+    this.cueLoopIn = g(1); this.cueLoopIn.connect(this.cueBus);
+    // its twin for a cue one-shot scaled AFTER the compressor (o.post: a teammate's sub blast at 0.6 × the enemy's —
+    // cues.js MIX.boom.allySub): scaled before it, a close blast's compression all but evened the two out (−0.3 dB at 1.5 m
+    // for 0.6 ×, measured in realflow.cjs); scaled after, it's that share of the enemy's as you hear it, near or far
+    this.cuePost = g(cueGain(this.vol.cues));
+    this.cuePostComp = ctx.createDynamicsCompressor();
+    for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) this.cuePostComp[k].value = this.cueComp[k].value;
+    this.cuePostOut = g(1);
+    this.cuePost.connect(this.cuePostComp); this.cuePostComp.connect(this.cuePostOut); this.cuePostOut.connect(this.sfxIn);
+    // shared plaza reverb (the loops' sends pause with them: loopRev; the cues' follow the Cues slider: cueRev)
     this.revSend = g(1);
+    this.loopRev = g(1); this.loopRev.connect(this.revSend);
+    this.cueRev = g(cueGain(this.vol.cues)); this.cueRev.connect(this.revSend);
+    this.cueLoopRev = g(1); this.cueLoopRev.connect(this.cueRev);
     this.conv = ctx.createConvolver();
     this.conv.buffer = makeImpulse(ctx, 1.5, 3.4, { pre: 0.012, seed: 3 });
     this.revRet = g(0.6);
@@ -164,8 +208,12 @@ export class AudioEngine {
 
   setVolumes(v = {}) {
     for (const k of ['master', 'music', 'sfx']) if (v[k] != null && Number.isFinite(+v[k])) this.vol[k] = Math.min(1, Math.max(0, +v[k]));
+    if (v.cues != null && Number.isFinite(+v.cues)) this.vol.cues = Math.min(1.5, Math.max(0, +v.cues));
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
+    this.cueBus.gain.setTargetAtTime(cueGain(this.vol.cues), t, 0.04);
+    this.cuePost.gain.setTargetAtTime(cueGain(this.vol.cues), t, 0.04);
+    this.cueRev.gain.setTargetAtTime(cueGain(this.vol.cues), t, 0.04);
     this.master.gain.setTargetAtTime(taper(this.vol.master), t, 0.04);
     this.musicBus.gain.setTargetAtTime(taper(this.vol.music), t, 0.04);
     this.sfxBus.gain.setTargetAtTime(taper(this.vol.sfx), t, 0.04);
@@ -215,7 +263,9 @@ export class AudioEngine {
 
   _sendScale(d) { return Math.sqrt(3 / (3 + 1.2 * Math.max(0, d - 3))); }
 
-  _voice(def, t, pos, vol, withFade) {
+  // refO: a per-call reference distance (sfx-cues: the cue director lets its cues carry further than their def says);
+  // cue: through the cue bus (the Cues slider, its compressor)
+  _voice(def, t, pos, vol, withFade, refO, cue, post = 1) {
     const ctx = this.ctx;
     const out = ctx.createGain(); out.gain.value = vol;
     const v = new V(ctx, out, t, this.rng);
@@ -224,19 +274,23 @@ export class AudioEngine {
     let head = out;
     if (withFade) { voice.fade = ctx.createGain(); out.connect(voice.fade); head = voice.fade; v.nodes.push(voice.fade); }
     let scale = 1;
+    const toPost = cue && !withFade && post < 0.999;
+    if (toPost) this.cuePostOut.gain.setValueAtTime(Math.max(0, post), t);
+    const dest = toPost ? this.cuePost : cue ? (withFade ? this.cueLoopIn : this.cueBus) : withFade ? this.loopIn : this.sfxIn;
     if (validPos(pos)) {
-      voice.dk = 3 / (def.ref || 3);                  // big sources: distance air-absorption / reverb scale with their size
+      const ref = refO > 0 ? refO : (def.ref || 3);
+      voice.dk = 3 / ref;                             // big sources: distance air-absorption / reverb scale with their size
       const d = this._dist(pos) * voice.dk;
       voice.lp = ctx.createBiquadFilter(); voice.lp.type = 'lowpass'; voice.lp.Q.value = 0.5; voice.lp.frequency.value = distCut(d);
-      voice.panner = this._panner(pos, def.ref || 3);
-      head.connect(voice.lp); voice.lp.connect(voice.panner); voice.panner.connect(this.sfxIn);
+      voice.panner = this._panner(pos, ref);
+      head.connect(voice.lp); voice.lp.connect(voice.panner); voice.panner.connect(dest);
       v.nodes.push(voice.lp, voice.panner);
       voice.rev += Math.min(0.25, Math.max(0, (d - 6) / 60));
       scale = this._sendScale(d);
-    } else head.connect(this.sfxIn);
+    } else head.connect(dest);   // (withFade: the loops)
     if (voice.rev > 0.001) {
-      voice.send = ctx.createGain(); voice.send.gain.value = voice.rev * scale;
-      head.connect(voice.send); voice.send.connect(this.revSend); v.nodes.push(voice.send);
+      voice.send = ctx.createGain(); voice.send.gain.value = voice.rev * scale * (toPost ? post : 1);
+      head.connect(voice.send); voice.send.connect(cue ? (withFade ? this.cueLoopRev : this.cueRev) : withFade ? this.loopRev : this.revSend); v.nodes.push(voice.send);
     }
     return voice;
   }
@@ -278,7 +332,7 @@ export class AudioEngine {
       while (this.voices.length >= MAX_VOICES) this._steal(this.voices.shift(), now);
     }
     const pitch = Math.max(0.05, o.pitch ?? 1) * (1 + (this.rng() * 2 - 1) * (d.jitter ?? 0.06));
-    const voice = this._voice(d, t, o.pos, vol);
+    const voice = this._voice(d, t, o.pos, vol, false, o.ref, o.cue ?? isCue(name), o.post ?? 1);
     const v = voice.v;
     try {
       if (d.build) d.build(v, pitch, o);
@@ -312,7 +366,7 @@ export class AudioEngine {
     if (this.loops.size >= MAX_LOOPS) this.loops.values().next().value.stop(0.05);
     const t = this.ctx.currentTime;
     const gain = d.gain ?? 0.5;
-    const voice = this._voice(d, t, o.pos, Math.max(0, +(o.volume ?? 1) || 0) * gain, true);
+    const voice = this._voice(d, t, o.pos, Math.max(0, +(o.volume ?? 1) || 0) * gain, true, o.ref, o.cue ?? isCue(name));
     const v = voice.v, outG = voice.out.gain, fadeG = voice.fade.gain;
     fadeG.setValueAtTime(0, t);
     fadeG.linearRampToValueAtTime(1, t + 0.06);
@@ -375,6 +429,29 @@ export class AudioEngine {
     p.linearRampToValueAtTime(target, now + 0.08);
     p.setValueAtTime(target, until);
     p.linearRampToValueAtTime(1, until + 0.6);
+  }
+
+  // lift any duck at once (a pause's long duck ends with the pause; duck(1, …) would duck to silence, not lift it)
+  unduck(fade = 0.15) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime, p = this.duckG.gain, v = this._duckAt(now), f = Math.max(0.01, +fade || 0.01);
+    this._duck = null;
+    this._duckPts = [[now, v], [now + f, 1]];
+    p.cancelScheduledValues(now);
+    p.setValueAtTime(v, now);
+    p.linearRampToValueAtTime(1, now + f);
+  }
+  // hush (true) or restore (false) every loop — a paused match's charge hums, rolls and machinery stop sounding
+  pauseLoops(on, fade = 0.08) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.loopsPaused = !!on;
+    for (const n of [this.loopIn, this.cueLoopIn, this.loopRev, this.cueLoopRev]) {   // (the loops' reverb sends too)
+      const p = n.gain;
+      p.cancelScheduledValues(now);
+      p.setValueAtTime(p.value, now);
+      p.linearRampToValueAtTime(on ? 0 : 1, now + Math.max(0.01, fade));
+    }
   }
 
   stopAll(fade = 0.1) {
@@ -2476,6 +2553,78 @@ def('boss_sunk', {
 });
 
 /* ------------------------------------------------------------------------------------------------------------ */
+// ---- Tower Command
+// the tower rolling: a low motor, a gear whine and the clatter of its treads (positional loop, src/fx/towerFx.js)
+def('tower_move', {
+  gain: 0.2, max: 2, jitter: 0, reverb: 0.06, oneShot: 1.6,
+  loop(v, p) {
+    const T = v.t;
+    const amp = v.gain(0.6, v.out), lp = v.filter('lowpass', 420 * p, 0.8, amp);
+    v.osc('sawtooth', 46 * p, T, null, lp);
+    v.osc('sawtooth', 46.7 * p, T, null, lp);
+    const whine = v.gain(0.07, v.out);
+    v.osc('triangle', 560 * p, T, null, v.filter('bandpass', 560 * p, 6, whine));
+    const clat = v.gain(0.22, v.out);
+    v.noise('white', T, null, v.filter('bandpass', 1700, 1.6, clat));
+    v.lfo(11 * p, 0.2, clat.gain, T, null, 'square');
+    v.lfo(1.3, 0.12, amp.gain, T, null);
+  },
+});
+// the tower pulled up at a checkpoint: a clunk and a two-tone alarm
+def('tower_checkpoint', {
+  gain: 0.3, max: 1, jitter: 0, reverb: 0.2, minGap: 0.4,
+  build(v, p) {
+    const T = v.t;
+    kick(v, T, 0.6, { f0: 110, f1: 45, d: 0.3 });
+    v.nz({ f: 380, q: 2, a: 0.002, d: 0.12, peak: 0.4 });
+    const pw = pulseWave(v.ctx, 0.35), lp = v.filter('lowpass', 3800, 0.8, v.out);
+    for (let i = 0; i < 3; i++) {
+      v.tone({ t: 0.12 + i * 0.26, type: pw, f: mtof(81) * p, a: 0.004, h: 0.09, d: 0.03, peak: 0.24, to: lp });
+      v.tone({ t: 0.25 + i * 0.26, type: pw, f: mtof(76) * p, a: 0.004, h: 0.09, d: 0.03, peak: 0.24, to: lp });
+    }
+  },
+});
+// a checkpoint cleared: a rising run into a bright stab and a bell
+def('tower_clear', {
+  gain: 0.32, max: 1, jitter: 0, reverb: 0.24, minGap: 0.4,
+  build(v, p) {
+    const T = v.t, lp = v.filter('lowpass', 5200, 0.8, v.out), pw = pulseWave(v.ctx, 0.25);
+    [64, 67, 71, 74, 79].forEach((m, i) => v.tone({ t: i * 0.045, type: pw, f: mtof(m) * p, a: 0.002, h: 0.03, d: 0.1, peak: 0.22, to: lp }));
+    for (const [m, pan] of [[71, -0.3], [74, 0.3], [79, 0]]) brass(v, T + 0.24, mtof(m) * p, 0.36, 0.3, { to: v.pan(pan, v.out), bright: 5200, a: 0.01, r: 0.3 });
+    kick(v, T + 0.24, 0.6);
+    bell(v, T + 0.3, mtof(91) * p, 0.18, { d: 0.8 });
+    crash(v, T + 0.24, 0.2, { d: 0.7 });
+  },
+});
+// a team takes the lead (the top bar's LEAD flash, src/ui/hud-lead.js) — a short sting, smaller than a capture's fanfare.
+// Ours: a quick rising pulse run (C E G) with an upward swoosh into a bright fifth, a bell on top.
+def('lead_ours', {
+  gain: 0.4, max: 1, jitter: 0, reverb: 0.18, minGap: 1,
+  build(v, p) {
+    const T = v.t, lp = v.filter('lowpass', 5200, 0.8, v.out), pw = pulseWave(v.ctx, 0.25);
+    [72, 76, 79].forEach((m, i) => v.tone({ t: i * 0.06, type: pw, f: mtof(m) * p, a: 0.002, h: 0.03, d: 0.09, peak: 0.26, to: lp }));
+    v.nz({ t: 0.02, f: 900, f1: 5600, sw: 0.17, q: 1.4, a: 0.08, d: 0.1, peak: 0.16 });
+    for (const [m, pan] of [[79, -0.25], [84, 0.25]]) brass(v, T + 0.18, mtof(m) * p, 0.2, 0.26, { to: v.pan(pan, v.out), bright: 5200, a: 0.008, r: 0.28 });
+    kick(v, T + 0.18, 0.35);
+    bell(v, T + 0.2, mtof(96) * p, 0.15, { d: 0.6 });
+  },
+});
+// theirs: the same shape turned down — a falling run (D B♭ F) sagging into a dark, low minor third with a thud
+def('lead_theirs', {
+  gain: 0.4, max: 1, jitter: 0, reverb: 0.16, minGap: 1,
+  build(v, p) {
+    const T = v.t, lp = v.filter('lowpass', 2600, 0.9, v.out), pw = pulseWave(v.ctx, 0.3);
+    [74, 70, 65].forEach((m, i) => v.tone({ t: i * 0.07, type: pw, f: mtof(m) * p, a: 0.002, h: 0.035, d: 0.1, peak: 0.24, to: lp }));
+    v.tone({ t: 0.2, type: 'sawtooth', f: 262 * p, f1: 131 * p, sw: 0.35, a: 0.01, d: 0.35, peak: 0.1, to: v.filter('lowpass', 1200, 2, v.out) });
+    for (const [m, pan] of [[58, -0.25], [61, 0.25]]) brass(v, T + 0.21, mtof(m) * p, 0.24, 0.26, { to: v.pan(pan, v.out), bright: 1800, a: 0.015, r: 0.3 });
+    tom(v, T + 0.21, 70, 0.5);
+  },
+});
+
+// sfx-cues: the sub and special cue sounds (src/audio/sfx-cues.js), built with this file's shared layers
+defineCueSounds(def, { texture, bloops, plips, bigSplat, inkBoom, clank, whoosh, vox });
+defineAlertSounds(def, { texture, bloops, whoosh, vox, clank });
+
 export const SFX_GROUPS = {
   UI: ['ui_hover', 'ui_click', 'ui_back', 'ui_confirm', 'ui_toggle', 'ui_slider', 'ui_error'],
   Weapons: ['shoot_shooter', 'shoot_blaster', 'blaster_pump', 'blaster_boom', 'charger_charge', 'charger_full', 'shoot_charger', 'roller_flick', 'roll',
@@ -2491,10 +2640,17 @@ export const SFX_GROUPS = {
     'bubble_pop', 'bubble_blast', 'jet_loop', 'jet_fire', 'jet_end', 'stamp_swing', 'stamp_slam', 'stamp_throw', 'booyah_charge',
     'booyah_cheer', 'booyah_throw', 'booyah_blast', 'zip_fire', 'zip_latch', 'zip_pull', 'crab_move', 'crab_gatling', 'crab_cannon',
     'crab_roll', 'crab_hit', 'crab_break',
+    ...CUE_GROUPS.Specials,   // sfx-cues
   ],
+  Subs: CUE_GROUPS.Subs,      // sfx-cues: throws, landings, fuses, loops and blasts of every sub
+  Flight: ALERT_GROUPS.Flight,          // sfx-loud: every thrown sub in the air (one def, a voice per kind: params.kind)
+  'Special alerts': ALERT_GROUPS.Alerts,   // sfx-loud: launch alerts + the "you're in it" alarm (params.kind)
+  'Special stings': ALERT_GROUPS.Stings,   // sfx-loud: someone popped a special
   Match: ['ready', 'go_horn', 'countdown_tick', 'one_minute', 'final_count', 'times_up', 'judge_drumroll', 'judge_reveal', 'victory_fanfare', 'defeat_jingle', 'xp_tick', 'level_up'],
   Zones: ['zone_ours', 'zone_theirs', 'zone_lost', 'zone_broken', 'zone_warn', 'zone_chance', 'zone_penalty', 'zone_shift', 'zone_final',
     'zone_overtime', 'zone_tick', 'zone_flood', 'zone_wipe', 'zone_hum'],
+  Tower: ['tower_move', 'tower_checkpoint', 'tower_clear'],
+  Lead: ['lead_ours', 'lead_theirs'],
   Boss: ['boss_roar', 'boss_step', 'boss_slam', 'boss_tele', 'boss_whistle', 'boss_barrel', 'boss_cannon_charge', 'boss_cannon_sweep', 'boss_gallop', 'boss_crash',
     'boss_dizzy', 'boss_frenzy', 'crablet_chitter', 'crablet_pop', 'boss_hit', 'boss_crit', 'boss_phase', 'boss_title', 'boss_defeat', 'boss_sunk'],
 };

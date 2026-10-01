@@ -26,6 +26,9 @@ export class BossNav {
     this.kind = new Uint8Array(N);   // 0 floor · 1 wall (solid / raised) · 2 drop (sea, gap) · 3 spawn pad
     this.pads = level.spawnPads.map((p) => ({ x: p.x, z: p.z, r: level.spawnBarrier }));
     this.planR = PLAN_WALL;
+    // stage pieces that come and go (a sprout pod's hedge, src/game/pods.js): fn(x, z, r) → true when one stands within
+    // r of (x, z). A charge stops at one like a wall (cast); the static fields never see them
+    this.dynWall = null;
     this._build();
   }
 
@@ -40,6 +43,9 @@ export class BossNav {
     }
     let best = 0, bn = -1;
     for (const [k, n] of hist) if (n > bn) { bn = n; best = k / 4; }
+    // a stage can name its boss floor (layout.boss.floorY) when its biggest level isn't the arena it wants — e.g.
+    // Treehills, whose 1.3 m terraces out-cover the meadow the boss belongs on
+    if (Number.isFinite(L.layout?.boss?.floorY)) best = L.layout.boss.floorY;
     this.floorY = best;
     for (let i = 0; i < N; i++) {
       const [x, z] = this.xz(i);
@@ -144,11 +150,14 @@ export class BossNav {
   cast(x, z, yaw, maxDist, stepLen = 0.25) {
     const s = Math.sin(yaw), c = Math.cos(yaw);
     let d = 0;
-    while (d + stepLen <= maxDist && this.poseOk(x + s * (d + stepLen), z + c * (d + stepLen), yaw)) d += stepLen;
+    const dyn = this.dynWall, f0 = WALL_BODY[0];
+    const dynOk = (dd) => !dyn || !dyn(x + s * (dd + f0.z), z + c * (dd + f0.z), f0.r);
+    while (d + stepLen <= maxDist && this.poseOk(x + s * (d + stepLen), z + c * (d + stepLen), yaw) && dynOk(d + stepLen)) d += stepLen;
     let wall = false;
     if (d + stepLen <= maxDist) {
       // what's just ahead of the claws: a wall bonks; an edge or the pad makes it dig in and skid
       const f = WALL_BODY[0], fx = x + s * (d + f.z), fz = z + c * (d + f.z);
+      if (dyn && dyn(fx, fz, f.r + 0.6)) wall = true;
       for (let k = 0; k <= 8 && !wall; k++) {
         const a = -0.9 + (k / 8) * 1.8;
         const px = fx + Math.sin(yaw + a) * (f.r + 0.6), pz = fz + Math.cos(yaw + a) * (f.r + 0.6);

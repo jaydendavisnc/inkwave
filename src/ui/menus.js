@@ -14,7 +14,7 @@ import {
 } from './ui-icons.js';
 import {
   GAME_TITLE, GAME_SUBTITLE, VERSION, WEAPONS, WEAPON_ORDER, SPECIALS, SUB, MAPS, DIFFICULTY, MATCH, QUALITY,
-  DEFAULT_SETTINGS, TEAM_PALETTES, COLORBLIND_PALETTE, PROGRESSION, BOT_NAMES, TEAM_NAMES, ZONES,
+  DEFAULT_SETTINGS, TEAM_PALETTES, COLORBLIND_PALETTE, PROGRESSION, BOT_NAMES, TEAM_NAMES, ZONES, TOWER,
   mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock,
 } from '../config.js';
 import * as LOOK from '../game/character-style.js';
@@ -78,17 +78,27 @@ const TIPS = [
   'Zone Control: a side zone on their half counts you down 4× faster than the one on yours.',
   'Zone Control: lose the zone to the other team and you get a penalty to count off before your count moves again.',
   'Zone Control: while they hold the zone your special charges fast. Team up and break their hold!',
+  'Tower Command: stand on the tower to push it toward their goal — four riders roll it 43% faster than one.',
+  'Tower Command: checkpoints stop the tower until it clears them. Lose it for 5 s and the checkpoint fills back up.',
+  'Tower Command: both teams on the tower stops it dead. Clear them off to keep it rolling.',
+  'Tower Command: take the tower back on your own half and it rolls home to the middle even with nobody on — hop off and defend it.',
 ];
 // Battle modes offered on the stage select (Zone Control: see src/game/zones.js)
 const ZONE_GLYPH = '<svg class="iw-ico" viewBox="0 0 64 64" aria-hidden="true"><path d="M8 21 V12 Q8 8 12 8 H21 M43 8 H52 Q56 8 56 12 V21 M56 43 V52 Q56 56 52 56 H43 M21 56 H12 Q8 56 8 52 V43" fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="19" y="19" width="26" height="26" rx="5" fill="currentColor"/></svg>';
+// Tower Command (src/game/tower.js): the tower — a platform on a track under a beacon
+const TOWER_GLYPH = '<svg class="iw-ico" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round"><ellipse cx="32" cy="31" rx="16" ry="4.6" stroke-width="4.6"/><ellipse cx="32" cy="19.5" rx="11.5" ry="3.4" stroke-width="4"/><ellipse cx="32" cy="9.5" rx="7" ry="2.3" stroke-width="3.4"/></g><rect x="9" y="39" width="46" height="7" rx="2.5" fill="currentColor"/><path d="M13 48 H51 L47 58 H17 Z" fill="currentColor"/></svg>';
 const MODE_INFO = {
   turf: { id: 'turf', label: 'TURF WAR', name: 'Turf War', icon: GLYPHS.drop, text: 'Ink the most ground before the clock runs out.' },
   zones: { id: 'zones', label: 'ZONE CONTROL', name: 'Zone Control', icon: ZONE_GLYPH, text: 'Hold the live zone to count down from 100 — first to 0 wins.' },
+  tower: { id: 'tower', label: 'TOWER COMMAND', name: 'Tower Command', icon: TOWER_GLYPH, text: 'Ride the tower into their base — furthest push wins, reach their goal to knock out.' },
   boss: { id: 'boss', label: 'BOSS BATTLE', name: 'Boss Battle', icon: BOSS_GLYPH, text: `Your squad of 8 against ${BOSS_NAME}.` },
 };
-const modeOf = (m) => (m === 'zones' || m === 'boss' ? m : 'turf');
-// the battle modes (Turf War / Zone Control) — the rules cards, the in-match strip and the results use these two
-const BATTLE_MODES = [MODE_INFO.turf, MODE_INFO.zones];
+const modeOf = (m) => (m === 'zones' || m === 'tower' || m === 'boss' ? m : 'turf');
+// the modes with a fixed 5:00 + overtime length (the length is locked on the stage select and in the lobby)
+const fixedLen = (m) => m === 'zones' || m === 'tower';
+const fixedDur = (m) => (m === 'tower' ? TOWER.duration : ZONES.duration) || 300;
+// the battle modes (Turf War / Zone Control / Tower Command) — the rules cards, the in-match strip and the results use these
+const BATTLE_MODES = [MODE_INFO.turf, MODE_INFO.zones, MODE_INFO.tower];
 const ZK = '#15121c';
 const zNum = (x, y, n, size = 16) => `<text x="${x}" y="${y}" text-anchor="middle" font-family="'Titan One', sans-serif" font-size="${size}" fill="#fff" stroke="${ZK}" stroke-width="3.2" paint-order="stroke" stroke-linejoin="round">${n}</text>`;
 const zPill = (x, y, w, hgt, cls, n, size) => `<g transform="translate(${x} ${y})"><rect width="${w}" height="${hgt}" rx="${hgt / 2.6}" fill="${ZK}"/><rect x="2.5" y="2.5" width="${w - 5}" height="${hgt - 5}" rx="${hgt / 3.2}" class="${cls}"/>${zNum(w / 2, hgt * 0.72, n, size)}</g>`;
@@ -126,6 +136,43 @@ const ZONE_RULE_ART = {
     <path d="M100 26 L100 10 M94 16 L100 9 L106 16" stroke="#ff4d6a" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`,
 };
+// Tower Command rule cards: a side view of the track, the tower on it
+const TW_TRACK = `<rect x="6" y="54" width="108" height="12" rx="6" fill="${ZK}"/><rect x="9" y="57" width="102" height="6" rx="3" fill="#f4ecdc"/>`;
+const twPaint = (c) => (c[0] === '#' ? `fill="${c}"` : `class="${c}"`);
+const twTower = (x, cls, riders = []) => `<g transform="translate(${x} 55)">
+  ${riders.map(([rx, rc]) => `<circle cx="${rx}" cy="-15" r="4.6" ${twPaint(rc)} stroke="${ZK}" stroke-width="2.2"/>`).join('')}
+  <rect x="-2.6" y="-34" width="5.2" height="24" fill="#fff" stroke="${ZK}" stroke-width="2"/>
+  <circle cx="0" cy="-36" r="5" ${twPaint(cls)} stroke="${ZK}" stroke-width="2.4"/>
+  <path d="M-17 -10 H17 L13 1 H-13 Z" ${twPaint(cls)} stroke="${ZK}" stroke-width="2.5" stroke-linejoin="round"/></g>`;
+const twLit = (x0, x1, cls) => `<rect x="${x0}" y="57" width="${x1 - x0}" height="6" rx="3" class="${cls}"/><path d="M${x0 + 3} 60 H${x1 - 3}" stroke="#fff" stroke-width="1.6" stroke-dasharray="3 4" opacity=".8"/>`;
+const twCp = (x, fill = '#ffd54a') => `<g transform="translate(${x} 60)"><path d="M0 -9 L9 0 L0 9 L-9 0 Z" fill="${fill}" stroke="${ZK}" stroke-width="2.4" stroke-linejoin="round"/></g>`;
+const twPill = (x, y, w, text, fill = ZK, size = 10, color = '#fff') => `<g transform="translate(${x} ${y})"><rect width="${w}" height="17" rx="8.5" fill="${fill}" stroke="${ZK}" stroke-width="2.4"/><text x="${w / 2}" y="12.6" text-anchor="middle" font-family="'Titan One', sans-serif" font-size="${size}" fill="${color}">${text}</text></g>`;
+const TOWER_RULE_ART = {
+  ride: `<svg viewBox="0 0 120 80" aria-hidden="true">${TW_TRACK}${twLit(40, 111, 'iw-fa')}
+    ${twTower(34, 'iw-fa', [[-11, 'iw-fa'], [-4, 'iw-fa'], [4, 'iw-fa'], [11, 'iw-fa']])}
+    <path d="M60 36 H92 M84 29 L93 36 L84 43" stroke="${ZK}" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M60 36 H92 M84 29 L93 36 L84 43" stroke="#fff" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    ${twPill(70, 6, 44, '×1.43', '#ffd54a', 11, ZK)}
+  </svg>`,
+  checkpoint: `<svg viewBox="0 0 120 80" aria-hidden="true">${TW_TRACK}${twLit(20, 70, 'iw-fa')}${twCp(30, '#8b8697')}
+    ${twTower(62, 'iw-fa', [[-8, 'iw-fa'], [8, 'iw-fa']])}${twCp(80)}
+    <g transform="translate(74 10)"><rect width="40" height="16" rx="8" fill="${ZK}"/><rect x="3" y="3" width="23" height="10" rx="5" class="iw-fa"/><path d="M26.5 2 V14" stroke="#fff" stroke-width="2"/></g>
+    <g transform="translate(10 12)"><circle r="9" cx="9" cy="9" fill="#fff" stroke="${ZK}" stroke-width="2.4"/><path d="M9 3.5 V9 L13 11.5" stroke="${ZK}" stroke-width="2.4" fill="none" stroke-linecap="round"/></g>
+    ${twPill(31, 13, 22, '3s', ZK, 10)}
+  </svg>`,
+  goal: `<svg viewBox="0 0 120 80" aria-hidden="true">${TW_TRACK}${twLit(9, 90, 'iw-fa')}
+    ${twTower(88, 'iw-fa', [[-6, 'iw-fa'], [6, 'iw-fa']])}
+    <g transform="translate(106 60)"><circle r="10" fill="#fff" stroke="${ZK}" stroke-width="2.6"/><circle r="5.5" class="iw-fb" stroke="${ZK}" stroke-width="2"/></g>
+    ${twPill(6, 8, 72, 'KNOCKOUT!', '#ffd54a', 10, ZK)}
+    <path d="M14 45 H66" stroke="${ZK}" stroke-width="2.2" stroke-dasharray="3 3" stroke-linecap="round"/>
+  </svg>`,
+  contest: `<svg viewBox="0 0 120 80" aria-hidden="true">${TW_TRACK}
+    ${twTower(50, '#ffd54a', [[-8, 'iw-fa'], [8, 'iw-fb']])}
+    <g transform="translate(84 12)"><path d="M7 0 H19 L26 7 V19 L19 26 H7 L0 19 V7 Z" fill="#ff4d6a" stroke="${ZK}" stroke-width="2.4" stroke-linejoin="round"/><rect x="6" y="11" width="14" height="4.4" rx="1.4" fill="#fff"/></g>
+    <path d="M100 48 a10 10 0 1 0 -4 8" stroke="${ZK}" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M100 48 a10 10 0 1 0 -4 8" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+    ${twPill(76, 60, 36, '5s', ZK, 10)}
+  </svg>`,
+};
 // how a Zone Control match was decided, in plain words (winner's view / loser's view)
 const ZONE_REASON = {
   knockout: ['KNOCKOUT!', 'Knocked out'],
@@ -134,6 +181,12 @@ const ZONE_REASON = {
   retake: ['Held on in overtime', 'Stopped in overtime'],
   neutralised: ['Held on in overtime', 'Pushed off the zone in overtime'],
   'overtime-cap': ['Won at the overtime limit', 'Lost at the overtime limit'],
+};
+// … and a Tower Command match
+const TOWER_REASON = {
+  ...ZONE_REASON,
+  neutralised: ['Held on in overtime', 'Lost the tower in overtime'],
+  'sudden-death': ['Pulled ahead in overtime', 'Overtaken in overtime'],
 };
 const DIFF_INFO = {
   easy: { pips: 1, text: 'Relaxed bots with shaky aim. Great for learning the ropes.' },
@@ -157,7 +210,7 @@ const LOCKER_TABS = [
   { id: 'outfit', label: 'OUTFIT', icon: 'shirt', sections: ['outfit'] },
 ];
 const MENU_DESC = {
-  play: 'Turf War or Zone Control 4 v 4 — or team up with the bots against HULLBREAKER in a Boss Battle',
+  play: 'Turf War, Zone Control or Tower Command 4 v 4 — or squad up against HULLBREAKER',
   online: 'Private rooms for up to 8 friends — create one or join with a room code',
   loadout: 'Choose your weapon, sub and special — or practice with it',
   locker: 'Choose your squidkid — tentacles, headgear, eyes, skin and outfit',
@@ -190,6 +243,7 @@ const SETTINGS_TABS = [
     { key: 'master', label: 'Master volume', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Overall loudness of everything.' },
     { key: 'music', label: 'Music', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Menu and battle soundtrack.' },
     { key: 'sfx', label: 'Sound effects', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Weapons, splats, voices and menu sounds.' },
+    { key: 'cues', label: 'Cues', type: 'slider', min: 0, max: 1.5, step: 0.05, fmt: pctFmt, help: 'The sounds that tell you what a sub or special is doing — throws, fuses, warnings, alerts — on top of Sound effects. 100 % is the standard mix; turn it up to hear them over a busy fight.' },
   ] },
   { id: 'gameplay', label: 'Gameplay', icon: 'swords', rows: [
     { key: 'cameraShake', label: 'Camera shake', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Screen shake from explosions, slams and hits.' },
@@ -885,7 +939,7 @@ export class Menus {
     const sp = this._special();
     const sub = this._sub();
     const items = [
-      { id: 'play', label: 'PLAY', sub: 'Turf War · Zone Control · Boss Battle', icon: GLYPHS.play, cls: 'iw-btn--menu iw-btn--xl iw-btn--primary', accept: () => this._go('mode'), sound: 'ui_confirm' },
+      { id: 'play', label: 'PLAY', sub: 'Turf · Zones · Tower · Boss Battle', icon: GLYPHS.play, cls: 'iw-btn--menu iw-btn--xl iw-btn--primary', accept: () => this._go('mode'), sound: 'ui_confirm' },
       { id: 'online', label: 'ONLINE', sub: 'Play with friends · private rooms', icon: GLYPHS.online, cls: 'iw-btn--menu iw-btn--online', accept: () => this._go('online'), sound: 'ui_confirm',
         badge: h('span', { class: 'iw-btn__live' }, h('i'), 'LIVE') },
       { id: 'loadout', label: 'LOADOUT', icon: weaponIcon(W.kind || lo.weapon), cls: 'iw-btn--menu', accept: () => this._go('loadout') },
@@ -894,6 +948,16 @@ export class Menus {
       { id: 'howto', label: 'HOW TO PLAY', icon: GLYPHS.question, cls: 'iw-btn--menu', accept: () => this._go('howto') },
       { id: 'credits', label: 'CREDITS', icon: GLYPHS.star, cls: 'iw-btn--menu', accept: () => this._go('credits') },
     ];
+    // the desktop app (electron/preload.cjs exposes inkwaveNative.quit) can close from here — never in a browser tab
+    const native = typeof window !== 'undefined' && window.inkwaveNative && typeof window.inkwaveNative.quit === 'function' ? window.inkwaveNative : null;
+    const quitBtn = native ? this._btn({ id: 'quitgame', label: 'QUIT GAME', icon: GLYPHS.exit || GLYPHS.close, cls: 'iw-btn--quitgame', sound: 'ui_click', accept: () => this._openModal({
+      title: 'QUIT INKWAVE?', danger: true,
+      text: 'Close the game and head back to your desktop?',
+      buttons: [
+        { label: 'KEEP PLAYING', accept: () => this._closeModal(), sound: null },
+        { label: 'QUIT', cls: 'iw-btn--danger', sound: 'ui_confirm', accept: () => { this._closeModal(true); safeCall(() => native.quit()); } },
+      ],
+    }) }) : null;
     const tilts = [-2.2, 1.3, 1.4, -1.1, 1.6, -1.3, 1.1];
     const btns = items.map((it, i) => { const b = this._btn({ ...it, tilt: tilts[i % tilts.length] }); b.classList.add('iw-in', 'iw-in--left'); return b; });
     const descText = h('span', { class: 'iw-main__desctext' });
@@ -933,7 +997,7 @@ export class Menus {
       desc,
       h('div', { class: 'iw-main__side' }, profile, kit),
       h('div', { class: 'iw-corner iw-corner--bl iw-in' }, `v${this._version()}`),
-      this._prompts([['Enter', 'A', 'Select'], ['Esc', 'B', 'Title']]));
+      (() => { const pr = this._prompts([['Enter', 'A', 'Select'], ['Esc', 'B', 'Title']]); if (quitBtn) pr.prepend(quitBtn); return pr; })());   // (QUIT GAME leads the prompt row, bottom right)
     return {
       el, wrap: true, initial: btns[0],
       onFocus: (f) => {
@@ -944,7 +1008,7 @@ export class Menus {
     };
   }
 
-  // ================================================================ SCREEN: mode (offline Play: Turf War | Zone Control | Boss Battle)
+  // ================================================================ SCREEN: mode (offline Play: Turf War | Zone Control | Tower Command | Boss Battle)
   _scr_mode() {
     const s = this._settings();
     const st = this._setup || (this._setup = { times: {} });
@@ -958,6 +1022,9 @@ export class Menus {
       { id: 'zones', name: 'ZONE CONTROL', kicker: 'RANKED RULES', img: stageArt('crossmarket', 'day'),
         blurb: 'Take the live zone and hold it: your count ticks down from 100. The zone moves, so keep up!',
         chips: [[GLYPHS.users, '4 V 4'], [GLYPHS.clock, `${Math.round((ZONES.duration || 300) / 60)}:00 + OT`], [ZONE_GLYPH, 'ROTATING ZONES']] },
+      { id: 'tower', name: 'TOWER COMMAND', kicker: 'RANKED RULES', img: stageArt('halyard', 'day'), badge: 'NEW!',
+        blurb: 'Ride the tower into their base. Clear the checkpoints — reach their goal for a knockout!',
+        chips: [[GLYPHS.users, '4 V 4'], [GLYPHS.clock, `${Math.round((TOWER.duration || 300) / 60)}:00 + OT`], [TOWER_GLYPH, 'MOVING TOWER']] },
       { id: 'boss', name: 'BOSS BATTLE', kicker: 'CO-OP', img: stageArt('kelpline', 'dusk'), badge: 'NEW!', beta: true,
         blurb: `Everyone's one squad against ${BOSS_NAME}, a giant crab in a rusted container. Sink it before time runs out!`,
         chips: [[GLYPHS.users, 'SQUAD OF 8'], [GLYPHS.clock, durLabel(bossLen)], [BOSS_GLYPH, '1 BOSS']] },
@@ -982,9 +1049,9 @@ export class Menus {
         ? h('span', { class: 'iw-mode__hero is-boss', html: bossSilhouette() })
         : h('span', { class: 'iw-mode__hero is-turf' },
           h('i', { class: 'iw-mode__squid is-a', html: SQUID }),
-          m.id === 'zones' ? h('i', { class: 'iw-mode__zone', html: ZONE_GLYPH }) : h('b', { class: 'iw-mode__vs iw-display' }, 'VS'),
+          m.id === 'zones' || m.id === 'tower' ? h('i', { class: 'iw-mode__zone', html: m.id === 'tower' ? TOWER_GLYPH : ZONE_GLYPH }) : h('b', { class: 'iw-mode__vs iw-display' }, 'VS'),
           h('i', { class: 'iw-mode__squid is-b', html: SQUID }));
-      const c = h('button', { class: `iw-mode iw-mode--${m.id} iw-in iw-in--pop`, style: { '--tilt': `${[-1.4, 0.6, 1.4][i] ?? 0}deg` } },
+      const c = h('button', { class: `iw-mode iw-mode--${m.id} iw-in iw-in--pop`, style: { '--tilt': `${(MODES.length > 3 ? [-1.4, 0.8, -0.6, 1.4] : [-1.4, 0.6, 1.4])[i] ?? 0}deg` } },
         h('span', { class: 'iw-mode__art' }, img, h('i', { class: 'iw-mode__tint' }),
           h('span', { class: 'iw-mode__splat', html: splatSVG({ seed: 51 + i * 9, fill: 'var(--mc)', r: 58, arms: 9, drops: 5 }) }),
           hero, h('i', { class: 'iw-mode__glare' })),
@@ -1015,7 +1082,7 @@ export class Menus {
     const el = h('div', { class: 'iw-screen iw-modesel' },
       bg, h('div', { class: 'iw-ss__scrim' }),
       this._header('PLAY', { sub: 'Choose a mode · you and the bots' }),
-      h('div', { class: 'iw-modesel__row' + (cards.length > 2 ? ' is-three' : '') }, cards),
+      h('div', { class: 'iw-modesel__row' + (cards.length > 3 ? ' is-three is-four' : cards.length > 2 ? ' is-three' : '') }, cards),
       this._prompts([[['←', '→'], 'DPad', 'Mode'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
     el.dataset.mode = cur;
     setBg(cur);
@@ -1234,12 +1301,12 @@ export class Menus {
     const lenSeg = this._seg(lOpts, st.duration, (v) => {
       st.duration = v; safeCall(() => this.api.setSettings && this.api.setSettings(boss ? { bossLength: v } : { matchLength: v })); updateStart();
     });
-    // Zone Control always runs 5:00 (+ overtime): the length shows locked and never touches the saved Turf War length
-    const zMin = Math.round((ZONES.duration || 300) / 60);
-    const lenLock = h('div', { class: 'iw-lenlock' }, h('b', null, `${zMin}:00`), h('span', null, '+ OVERTIME'), h('em', null, 'ZONE CONTROL'));
+    // Zone Control and Tower Command always run 5:00 (+ overtime): the length shows locked and never touches the saved Turf War length
+    const lenLockB = h('b'), lenLockEm = h('em');
+    const lenLock = h('div', { class: 'iw-lenlock' }, lenLockB, h('span', null, '+ OVERTIME'), lenLockEm);
     const lenRow = h('div', { class: 'iw-setrow iw-setrow--stack' }, h('div', { class: 'iw-setrow__label' }, h('i', { html: GLYPHS.clock }), 'MATCH LENGTH'), lenSeg.el, lenLock);
     const lenLocked = () => { this._sfx('ui_error', 0.15); restartAnim(lenLock, 'is-edge-r'); };
-    this._bind(lenRow, { id: 'length', type: 'row', adjust: (d) => (st.mode === 'zones' ? lenLocked() : lenSeg.adjust(d)), accept: () => (st.mode === 'zones' ? lenLocked() : lenSeg.cycle()) });
+    this._bind(lenRow, { id: 'length', type: 'row', adjust: (d) => (fixedLen(st.mode) ? lenLocked() : lenSeg.adjust(d)), accept: () => (fixedLen(st.mode) ? lenLocked() : lenSeg.cycle()) });
     const matchPanel = this._panel('iw-ss__match iw-in iw-in--up', diffRow, dText, lenRow);
 
     // ---- your weapon + your look + START
@@ -1267,7 +1334,7 @@ export class Menus {
     const updateStart = () => {
       const m = byId(st.mapId);
       // mode · stage · time (+ the length Turf War lets you pick; bot skill sits right beside it in its own panel)
-      startSub.textContent = `${MODE_INFO[st.mode].name} · ${m ? m.name : ''} · ${TIME_INFO[timeOf(st.mapId)].label}${st.mode === 'zones' ? '' : ` · ${durLabel(st.duration)}`}`;
+      startSub.textContent = `${MODE_INFO[st.mode].name} · ${m ? m.name : ''} · ${TIME_INFO[timeOf(st.mapId)].label}${fixedLen(st.mode) ? '' : ` · ${durLabel(st.duration)}`}`;
       // long stage names: tighten the line a touch rather than cut it off
       requestAnimationFrame(() => {
         const box = startSub.parentElement;
@@ -1338,7 +1405,7 @@ export class Menus {
 
     const MI = MODE_INFO[st.mode];
     const head = this._header(MI.label, { sub: boss ? `Pick a stage and the time of day · your squad of 8 vs ${BOSS_NAME}`
-      : st.mode === 'zones' ? 'Pick a stage and the time of day · 4 v 4 against bots · 5:00 + overtime' : 'Pick a stage and the time of day · 4 v 4 against bots' });
+      : fixedLen(st.mode) ? `Pick a stage and the time of day · 4 v 4 against bots · ${Math.round(fixedDur(st.mode) / 60)}:00 + overtime` : 'Pick a stage and the time of day · 4 v 4 against bots' });
     const el = h('div', { class: 'iw-screen iw-setup iw-ss' + (boss ? ' is-boss' : '') },
       bg, h('div', { class: 'iw-ss__scrim' }),
       head,
@@ -1348,10 +1415,11 @@ export class Menus {
       this._prompts([[['↑', '↓'], 'DPad', 'Stage'], [['←', '→'], null, 'Day · Dusk'], ['R', 'Y', 'Mode'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
     el.querySelector('.iw-prompts').children[1].querySelector('.iw-padg').innerHTML = padGlyph('LB') + padGlyph('RB');
 
-    // ---- the mode (picked on the mode screen): the locked Zone Control length, the START line
+    // ---- the mode (picked on the mode screen): the locked Zone Control / Tower Command length, the START line
     const renderMode = () => {
       el.dataset.mode = st.mode;
-      lenRow.classList.toggle('is-locked', st.mode === 'zones');
+      lenRow.classList.toggle('is-locked', fixedLen(st.mode));
+      if (fixedLen(st.mode)) { lenLockB.textContent = `${Math.round(fixedDur(st.mode) / 60)}:00`; lenLockEm.textContent = MODE_INFO[st.mode].label; }
       updateStart();
     };
 
@@ -1359,9 +1427,9 @@ export class Menus {
     const selTicket = () => tickets.find((x) => x._mid === st.mapId) || tickets[0];
     const graph = new Map();
     tickets.forEach((t, i) => graph.set(t, { up: tickets[i - 1] || null, down: tickets[i + 1] || diffRow }));
-    const lenOrDiff = () => (st.mode === 'zones' ? diffRow : lenRow);
+    const lenOrDiff = () => (fixedLen(st.mode) ? diffRow : lenRow);
     graph.set(tickets[0], { up: null, down: tickets[1] || diffRow });
-    graph.set(diffRow, { up: selTicket, down: () => (st.mode === 'zones' ? start : lenRow) });
+    graph.set(diffRow, { up: selTicket, down: () => (fixedLen(st.mode) ? start : lenRow) });
     graph.set(lenRow, { up: diffRow, down: start });
     graph.set(tgl, { up: null, down: start });
     graph.set(weaponChip, { up: tgl, down: null, left: lenOrDiff, right: lookChip });
@@ -1404,10 +1472,10 @@ export class Menus {
     const st = this._setup;
     const time = this._stageTime(st.mapId);
     const mode = modeOf(st.mode);
-    // Zone Control has a fixed length (main uses ZONES.duration) and never overwrites a saved length
-    const cfg = { mode, mapId: st.mapId, time, difficulty: st.difficulty, ...(mode === 'zones' ? {} : { duration: st.duration }) };
+    // Zone Control / Tower Command have a fixed length (main uses ZONES / TOWER.duration) and never overwrite a saved length
+    const cfg = { mode, mapId: st.mapId, time, difficulty: st.difficulty, ...(fixedLen(mode) ? {} : { duration: st.duration }) };
     safeCall(() => this.api.setSettings && this.api.setSettings({ difficulty: st.difficulty, lastStage: st.mapId, lastMode: mode, stageTimes: { ...(st.times || {}) },
-      ...(mode === 'zones' ? {} : { [mode === 'boss' ? 'bossLength' : 'matchLength']: st.duration }) }));
+      ...(fixedLen(mode) ? {} : { [mode === 'boss' ? 'bossLength' : 'matchLength']: st.duration }) }));
     if (this._scr) {
       this._scr.el.classList.add('is-launch');
       const b = this._scr.el.querySelector('.iw-btn--start');
@@ -1994,6 +2062,7 @@ export class Menus {
       if (nv === v) { if (src === 'key') { this._sfx('ui_error', 0.2); restartAnim(el, 'is-edge'); } return; }
       v = nv; render();
       this._setSetting(key, v);
+      if (key === 'cues') safeCall(() => this.api.cuePreview && this.api.cuePreview());   // (hear the cue level you picked)
       this._sfx('ui_slider', 0.05);
       bump();
       if (src === 'key') restartAnim(knob, 'is-bump');
@@ -2185,7 +2254,7 @@ export class Menus {
           safeCall(() => P.cur.set(value, s));
           pvVal.textContent = fmtVal(rowDef(key), value);
           if (pvVal.animate && !prefersReducedMotion()) pvVal.animate([{ scale: 1.2 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
-        } else if (P.cur && (key === 'master') && (P.key === 'music' || P.key === 'sfx')) safeCall(() => P.cur.set(this._settings()[P.key], this._settings()));
+        } else if (P.cur && (key === 'master' || key === 'sfx') && (P.key === 'music' || P.key === 'sfx' || P.key === 'cues')) safeCall(() => P.cur.set(this._settings()[P.key], this._settings()));
       },
       onNav: (dir) => {
         if (dir === 'tab_prev' || dir === 'tab_next') {
@@ -2241,27 +2310,37 @@ export class Menus {
       ['rotate', 'Zones rotate', 'Every 30–60 s the live zone swaps between the centre and a side zone: 1 point per 2 s on your half, per ½ s on theirs.'],
       ['penalty', 'Don’t lose it', 'If they take the zone from you, ¾ of what you counted since you took it becomes a penalty: your count won’t move until you count it off.'],
     ];
-    const card = ([art, title, text], i, zones) => h('div', { class: 'iw-rule iw-in iw-in--pop', style: { '--tilt': `${[-1.2, 1, 0.8, -1][i]}deg` } },
-      h('div', { class: 'iw-rule__art' + (zones ? ' is-zone' : ''), html: zones ? ZONE_RULE_ART[art] : RULE_ART[art] }),
+    const towerRules = [
+      ['ride', 'Ride the tower', 'Ink its side and swim up onto it to take it: it rolls toward their base. More riders, more speed — up to ×1.43 with four aboard.'],
+      ['checkpoint', 'Clear checkpoints', 'Checkpoints stop the tower until you clear them — cleared ones never stop it again. Lose it for 5 s and the checkpoint fills back up.'],
+      ['goal', 'Push it home', 'Your count drops the further you push into their half. Reach their goal for a knockout — otherwise the furthest push wins.'],
+      ['contest', 'Both on it? It stops', 'With both teams aboard the tower won’t move. Leave it empty for 5 s and it goes neutral and rolls back to the middle — on your own half, yours rolls home by itself meanwhile.'],
+    ];
+    const card = ([art, title, text], i, mode) => h('div', { class: 'iw-rule iw-in iw-in--pop', style: { '--tilt': `${[-1.2, 1, 0.8, -1][i]}deg` } },
+      h('div', { class: 'iw-rule__art' + (mode !== 'turf' ? ' is-zone' : ''), html: (mode === 'tower' ? TOWER_RULE_ART : mode === 'zones' ? ZONE_RULE_ART : RULE_ART)[art] }),
       h('div', { class: 'iw-rule__num' }, String(i + 1)),
       h('div', { class: 'iw-rule__title' }, title),
       h('p', { class: 'iw-rule__text' }, text));
     const zoneNotes = () => h('div', { class: 'iw-howto__notes iw-in iw-in--up' },
       h('div', { class: 'iw-hnote' }, h('i', { html: GLYPHS.bolt }), h('span', null, h('b', null, 'Specials charge fast'), ' while the other team holds the zone — use them to break in.')),
       h('div', { class: 'iw-hnote' }, h('i', { html: GLYPHS.clock }), h('span', null, h('b', null, 'Overtime:'), ' at time up, the team behind plays on while it holds the zone.')));
+    const towerNotes = () => h('div', { class: 'iw-howto__notes iw-in iw-in--up' },
+      h('div', { class: 'iw-hnote' }, h('i', { html: GLYPHS.bolt }), h('span', null, h('b', null, 'Specials charge fast'), ' while your team holds the tower — and for the team behind while it sits neutral.')),
+      h('div', { class: 'iw-hnote' }, h('i', { html: GLYPHS.clock }), h('span', null, h('b', null, 'Overtime:'), ' at time up, the team behind plays on while it holds the tower — until it takes the lead or loses the tower.')));
+    const RULESETS = { turf: [rules, null], zones: [zoneRules, zoneNotes], tower: [towerRules, towerNotes] };
     const m0 = G.match && !G.match.attract && !G.match.practice ? G.match.mode : this._settings().lastMode;
-    let rulesMode = m0 === 'zones' ? 'zones' : 'turf';   // (the rules cards cover the two battle modes)
+    let rulesMode = RULESETS[m0] ? m0 : 'turf';   // (the rules cards cover the three battle modes)
     const rulesEl = h('div', { class: 'iw-howto__rules' });
     const notesSlot = h('div', { class: 'iw-howto__noteslot' });
     const renderRules = (anim) => {
-      const zones = rulesMode === 'zones';
-      rulesEl.replaceChildren(...(zones ? zoneRules : rules).map((r, i) => card(r, i, zones)));
-      notesSlot.replaceChildren(...(zones ? [zoneNotes()] : []));
+      const [list, notes] = RULESETS[rulesMode];
+      rulesEl.replaceChildren(...list.map((r, i) => card(r, i, rulesMode)));
+      notesSlot.replaceChildren(...(notes ? [notes()] : []));
       if (headSub) headSub.textContent = `${MODE_INFO[rulesMode].name} in 30 seconds`;
       if (anim) restartAnim(rulesEl, 'is-swap');
     };
     const rOpts = BATTLE_MODES.map((mi) => [mi.id, h('span', { class: 'iw-segico' }, h('i', { html: mi.icon }), mi.label)]);
-    const rSeg = this._seg(rOpts, rulesMode, (v) => { rulesMode = v === 'zones' ? 'zones' : 'turf'; renderRules(true); });
+    const rSeg = this._seg(rOpts, rulesMode, (v) => { rulesMode = RULESETS[v] ? v : 'turf'; renderRules(true); });
     const rulesRow = h('div', { class: 'iw-ctl-switch iw-howto__modes iw-in' }, rSeg.el);
     this._bind(rulesRow, { id: 'rules', type: 'row', adjust: rSeg.adjust, accept: rSeg.cycle });
     let headSub = null;
@@ -2785,8 +2864,8 @@ export class Menus {
     const teamOf = (p) => (p && p.team === 1 ? 1 : 0);
     const colors = () => this._teamColors();
     const bossMode = () => lob.mode === 'boss';   // Boss Battle: one squad (team 0) vs HULLBREAKER (the session carries lobby.mode)
-    const lobMode = () => modeOf(lob.mode);       // turf | zones | boss
-    const LOB_MODES = ['turf', 'zones', 'boss'];
+    const lobMode = () => modeOf(lob.mode);       // turf | zones | tower | boss
+    const LOB_MODES = ['turf', 'zones', 'tower', 'boss'];
     const S = { launching: null, pendingTeam: null, teamPref: 'auto', emoteCd: 0, lastLobby: null, alive: true, copied: 0, subs: [], age: 0, joins: [], leaves: [], batchT: 0 };
 
     // ---- room code (top-left, big and proud)
@@ -2840,9 +2919,10 @@ export class Menus {
     const timeSeg = this._seg([['day', h('span', { class: 'iw-segico' }, h('i', { html: GLYPHS.sun }), 'DAY')], ['dusk', h('span', { class: 'iw-segico' }, h('i', { html: GLYPHS.moon }), 'DUSK')]], lob.time === 'dusk' ? 'dusk' : 'day', (v) => hostSet({ time: v }));
     const lenSegT = this._seg(durations.map((d) => [d, durLabel(d)]), lob.duration, (v) => hostSet({ duration: v }));
     const lenSegB = this._seg(BOSS_DURATIONS.map((d) => [d, durLabel(d)]), BOSS_DURATIONS.includes(lob.duration) ? lob.duration : 240, (v) => hostSet({ duration: v }));
-    // Zone Control: a fixed 5:00 + overtime (as offline)
-    const lenLockZ = h('div', { class: 'iw-lenlock' }, h('b', null, `${Math.round((ZONES.duration || 300) / 60)}:00`), h('span', null, '+ OVERTIME'));
-    const lenZ = () => { if (lobMode() === 'zones') { restartAnim(rLen, 'is-shake'); this._sfx('ui_error', 0.15); return true; } return false; };
+    // Zone Control / Tower Command: a fixed 5:00 + overtime (as offline)
+    const lenLockZB = h('b', null, `${Math.round(fixedDur(lobMode()) / 60)}:00`);
+    const lenLockZ = h('div', { class: 'iw-lenlock' }, lenLockZB, h('span', null, '+ OVERTIME'));
+    const lenZ = () => { if (fixedLen(lobMode())) { restartAnim(rLen, 'is-shake'); this._sfx('ui_error', 0.15); return true; } return false; };
     const lenSeg = { el: h('span', { class: 'iw-lob__lensegs' }, lenSegT.el, lenSegB.el, lenLockZ), adjust: (d) => lenZ() || (bossMode() ? lenSegB : lenSegT).adjust(d), cycle: () => lenZ() || (bossMode() ? lenSegB : lenSegT).cycle(),
       refresh: (v) => (bossMode() ? lenSegB : lenSegT).refresh(v) };
     const botTgl = this._toggle({ key: '_bots', onChange: (v) => hostSet({ bots: v }) }, lob.bots !== false);
@@ -2963,8 +3043,8 @@ export class Menus {
     const setMode = (d) => {
       if (!isHost()) { this._bump(rMode, d < 0 ? 'left' : 'right'); this._sfx('ui_error', 0.15); return; }
       const next = LOB_MODES[(LOB_MODES.indexOf(lobMode()) + (d < 0 ? -1 : 1) + LOB_MODES.length) % LOB_MODES.length];
-      // keep the length sensible for the mode (boss fights run 3–5 min, 4 by default; Zone Control is 5:00 + overtime)
-      const dur = next === 'boss' ? 240 : next === 'zones' ? (ZONES.duration || 300) : (durations.includes(lob.duration) ? lob.duration : (MATCH.defaultDuration || 180));
+      // keep the length sensible for the mode (boss fights run 3–5 min, 4 by default; Zone Control / Tower Command are 5:00 + overtime)
+      const dur = next === 'boss' ? 240 : fixedLen(next) ? fixedDur(next) : (durations.includes(lob.duration) ? lob.duration : (MATCH.defaultDuration || 180));
       // a stage with no Boss Battle (Cargo Terminal) hands the room to a boss-eligible one (the session does the same)
       const was = maps.find((m) => m.id === lob.map);
       const map = next === 'boss' && !mapBossOk(lob.map) ? bossFallbackMap(lob.map) : lob.map;
@@ -3302,14 +3382,16 @@ export class Menus {
       { const P0 = TEAM_PALETTES[palIdx()]; palName.textContent = P0 ? P0.names.join(' vs ') : ''; }
       botTgl.refresh(lob.bots !== false);
       diffSeg.refresh(diffs[lob.difficulty] ? lob.difficulty : 'normal');
-      const bm = bossMode(), md = lobMode(), zm = md === 'zones';
+      const bm = bossMode(), md = lobMode(), zm = fixedLen(md);
       if (rMode._shown !== md) {
         const first = rMode._shown === undefined;
         rMode._shown = md;
         modeName.textContent = MODE_INFO[md].label;
-        modeIco.innerHTML = bm ? BOSS_GLYPH : zm ? ZONE_GLYPH : GLYPHS.flag;
+        modeIco.innerHTML = bm ? BOSS_GLYPH : md === 'tower' ? TOWER_GLYPH : zm ? ZONE_GLYPH : GLYPHS.flag;
         el.classList.toggle('is-bossmode', bm);
-        el.classList.toggle('is-zonemode', zm);
+        el.classList.toggle('is-zonemode', zm);   // (the fixed-length modes: Zone Control, Tower Command)
+        el.classList.toggle('is-towermode', md === 'tower');
+        lenLockZB.textContent = `${Math.round(fixedDur(md) / 60)}:00`;
         diffLbl.querySelector('.iw-lset__lbltxt').textContent = bm ? 'DIFFICULTY' : 'BOT SKILL';
         hostChip.lastChild.textContent = bm || zm ? 'HOST' : 'YOU’RE THE HOST';   // the longer headlines need the room
         lenSegT.el.style.display = bm || zm ? 'none' : ''; lenSegB.el.style.display = bm ? '' : 'none';
@@ -3333,7 +3415,7 @@ export class Menus {
         if (prev.difficulty !== lob.difficulty) flash(rDiff);
         if ((prev.mode || 'turf') !== (lob.mode || 'turf')) {
           flash(rMode);
-          if (!isHost()) this.toast(`${host ? host.name : 'The host'} picked ${bossMode() ? `BOSS BATTLE — everyone vs ${BOSS_NAME}!` : MODE_INFO[lobMode()].label}`, { icon: bossMode() ? BOSS_GLYPH : lobMode() === 'zones' ? ZONE_GLYPH : GLYPHS.flag });
+          if (!isHost()) this.toast(`${host ? host.name : 'The host'} picked ${bossMode() ? `BOSS BATTLE — everyone vs ${BOSS_NAME}!` : MODE_INFO[lobMode()].label}`, { icon: bossMode() ? BOSS_GLYPH : MODE_INFO[lobMode()].icon === GLYPHS.drop ? GLYPHS.flag : MODE_INFO[lobMode()].icon });
         }
         if (!isHost() && (prev.map !== lob.map || prev.time !== lob.time)) {
           const m = maps.find((x) => x.id === lob.map);
@@ -3646,8 +3728,14 @@ export class Menus {
           const z = m.zones.state();
           zones = { count: z.count, penalty: z.penalty.map((p) => Math.max(0, Math.ceil(p - 1e-6))), owner: z.owner, active: z.active, overtime: !!z.overtime, overtimeT: z.overtimeT };
         }
+        let tower = null;
+        if (m.mode === 'tower' && m.tower && m.tower.state) {
+          const t = m.tower.state();
+          tower = { count: t.count.map((c) => Math.max(0, Math.ceil(c - 1e-6))), penalty: [0, 0], owner: t.owner, contested: !!t.contested, returning: !!t.returning, homing: !!t.homing,
+            riders: t.riders, next: t.next, emptyT: t.emptyT, overtime: !!t.overtime, overtimeT: t.overtimeT };
+        }
         return {
-          live: true, time: Math.max(0, +m.time || 0), duration: Math.max(1, +m.duration || 180), mode: modeOf(m.mode), zones,
+          live: true, time: Math.max(0, +m.time || 0), duration: Math.max(1, +m.duration || 180), mode: modeOf(m.mode), zones, tower,
           map: (game.mapDef && game.mapDef.name) || '', difficulty: m.opts && m.opts.difficulty,
           colors: [toHex(hex[0] || a), toHex(hex[1] || b)],
           names: (game.palette && game.palette.names) || this._accentNames(),
@@ -3678,6 +3766,7 @@ export class Menus {
     if (safeCall(() => this.api.isPractice && this.api.isPractice())) return this._scr_pausePractice();
     const snap = this._matchSnapshot();
     const zoneMode = snap.mode === 'zones' && !!snap.zones;
+    const towerMode = snap.mode === 'tower' && !!snap.tower;
     // online the match keeps running underneath this menu, and quitting leaves the room
     const online = !!(G.netm || (G.net && G.net.state === 'match'));
     const items = [
@@ -3687,7 +3776,7 @@ export class Menus {
       { id: 'quit', label: online ? 'LEAVE ROOM' : 'QUIT MATCH', icon: online ? GLYPHS.exit : GLYPHS.close, cls: 'iw-btn--menu iw-btn--danger', accept: () => this._openModal({
         title: online ? 'LEAVE ROOM?' : 'QUIT MATCH?', danger: true,
         text: online ? 'You’ll leave the match and the room — a bot takes over your squidkid for the team.'
-          : zoneMode ? 'You will leave this Zone Control match and head back to the lobby. It will not count.' : 'You will leave this Turf War and head back to the lobby. Your turf will not count.',
+          : zoneMode || towerMode ? `You will leave this ${MODE_INFO[snap.mode].name} match and head back to the lobby. It will not count.` : 'You will leave this Turf War and head back to the lobby. Your turf will not count.',
         buttons: [
           { label: 'KEEP PLAYING', accept: () => this._closeModal(), sound: null },
           { label: 'QUIT', cls: 'iw-btn--danger', sound: 'ui_confirm', accept: () => {
@@ -3709,8 +3798,9 @@ export class Menus {
     const clockLbl = h('small', null, 'LEFT');
     const clock = h('div', { class: 'iw-pclock' }, h('span', { class: 'iw-pclock__ring' }, clockArc), h('div', { class: 'iw-pclock__txt' }, clockNum, clockLbl));
     // Zone Control: both teams' countdowns (+ penalty), who holds the live objective, overtime
+    // Tower Command: the same strip: both teams' counts, who's riding the tower and what it's doing
     let zoneStrip = null, zoneRefresh = null;
-    if (zoneMode) {
+    if (zoneMode || towerMode) {
       const side = (t) => {
         const num = h('b', { class: 'iw-pzone__num' }), pen = h('span', { class: 'iw-pzone__pen' });
         const el = h('div', { class: `iw-pzone__team iw-pzone__team--${t ? 'b' : 'a'}` },
@@ -3720,7 +3810,7 @@ export class Menus {
       };
       const za = side(0), zb = side(1);
       const objName = h('b'), objState = h('span', { class: 'iw-pzone__state' });
-      const obj = h('div', { class: 'iw-pzone__obj' }, h('i', { class: 'iw-pzone__ico', html: ZONE_GLYPH }), objName, objState);
+      const obj = h('div', { class: 'iw-pzone__obj' }, h('i', { class: 'iw-pzone__ico', html: towerMode ? TOWER_GLYPH : ZONE_GLYPH }), objName, objState);
       zoneStrip = h('div', { class: 'iw-pzone' }, za.el, obj, zb.el);
       zoneRefresh = (z) => {
         for (const [t, x] of [[0, za], [1, zb]]) {
@@ -3730,9 +3820,15 @@ export class Menus {
           x.el.classList.toggle('is-ahead', z.count[t] < z.count[1 - t]);   // the count is the score (not + penalty)
           x.el.classList.toggle('is-holding', z.owner === t);
         }
-        const names = snap.names;
-        objName.textContent = z.active === 'center' ? 'CENTRE ZONE' : `${(names[z.active === 'sideA' ? 0 : 1] || TEAM_NAMES[z.active === 'sideA' ? 0 : 1]).toUpperCase()} SIDE`;
-        objState.textContent = z.owner >= 0 ? `HELD BY ${(names[z.owner] || TEAM_NAMES[z.owner]).toUpperCase()}` : 'NEUTRAL';
+        const names = snap.names, tn = (t) => (names[t] || TEAM_NAMES[t]).toUpperCase();
+        if (towerMode) {
+          objName.textContent = z.contested ? 'CONTESTED' : z.owner >= 0 ? `${tn(z.owner)} RIDING` : 'TOWER';
+          objState.textContent = z.contested ? 'BOTH TEAMS ABOARD' : z.owner < 0 ? (z.returning ? 'ROLLING BACK' : 'NEUTRAL')
+            : z.next && z.next.at ? `CHECKPOINT · ${Math.max(0, Math.ceil(z.next.left - 1e-6))}` : z.riders[z.owner] > 0 ? `${z.riders[z.owner]} ABOARD` : z.homing ? 'ROLLING HOME' : 'EMPTY';
+        } else {
+          objName.textContent = z.active === 'center' ? 'CENTRE ZONE' : `${tn(z.active === 'sideA' ? 0 : 1)} SIDE`;
+          objState.textContent = z.owner >= 0 ? `HELD BY ${tn(z.owner)}` : 'NEUTRAL';
+        }
         obj.dataset.owner = z.owner < 0 ? 'n' : z.owner ? 'b' : 'a';
         zoneStrip.classList.toggle('is-ot', !!z.overtime);
       };
@@ -3767,8 +3863,8 @@ export class Menus {
     const matchPanel = this._panel('iw-pmatch iw-panel--flat iw-in iw-in--right',
       h('div', { class: 'iw-pmatch__top' },
         h('div', { class: 'iw-pmatch__info' },
-          h('div', { class: 'iw-pmatch__mode' }, h('span', { class: 'iw-pmatch__tag' }, zoneMode ? 'ZONE CONTROL' : 'TURF WAR'), diff ? h('span', { class: 'iw-pmatch__diff' }, h('i', { html: GLYPHS.bot }), `${diff.name} bots`) : null),
-          h('div', { class: 'iw-pmatch__map' }, h('i', { html: GLYPHS.map }), snap.map || (zoneMode ? 'Zone Control' : 'Turf War'))),
+          h('div', { class: 'iw-pmatch__mode' }, h('span', { class: 'iw-pmatch__tag' }, MODE_INFO[towerMode ? 'tower' : zoneMode ? 'zones' : 'turf'].label), diff ? h('span', { class: 'iw-pmatch__diff' }, h('i', { html: GLYPHS.bot }), `${diff.name} bots`) : null),
+          h('div', { class: 'iw-pmatch__map' }, h('i', { html: GLYPHS.map }), snap.map || MODE_INFO[towerMode ? 'tower' : zoneMode ? 'zones' : 'turf'].name)),
         clock),
       zoneStrip, you, teams, ctlWrap);
     colorVars(matchPanel, 'ta', snap.colors[0]);
@@ -3777,13 +3873,14 @@ export class Menus {
 
     const refresh = (s) => {
       const tLeft = s.time, frac = clamp(tLeft / s.duration);
-      const ot = !!(zoneMode && s.zones && s.zones.overtime);
+      const obj = zoneMode ? s.zones : towerMode ? s.tower : null;
+      const ot = !!(obj && obj.overtime);
       clockNum.textContent = ot ? 'OT' : fmtTime(tLeft);
       clockLbl.textContent = ot ? 'OVERTIME' : 'LEFT';
       clock.style.setProperty('--f', ot ? '1' : frac.toFixed(4));
       clock.classList.toggle('is-low', tLeft <= 60 || ot);
       clock.classList.toggle('is-ot', ot);
-      if (zoneRefresh && s.zones) zoneRefresh(s.zones);
+      if (zoneRefresh && obj) zoneRefresh(obj);
       const me = s.players.find((p) => p.isSelf) || selfP;
       sTurf.b.innerHTML = `${fmtInt(me.turf || 0)}<small>p</small>`;
       sSplat.b.textContent = String(me.splats || 0);
@@ -3901,11 +3998,14 @@ export class Menus {
     const winTeam = win ? selfTeam : 1 - selfTeam;
     const reduced = prefersReducedMotion();
     // Zone Control: final countdowns + how it was decided (the coverage-margin tags are a Turf War thing)
-    const zd = d.mode === 'zones' && d.zones ? d.zones : null;
-    const resMode = boss ? 'boss' : zd ? 'zones' : 'turf';
+    // Tower Command: the same race to 0 — each team's count is how far it still had to push (no penalties)
+    const td = d.mode === 'tower' && d.tower ? d.tower : null;
+    const zd = td ? { ...td, penalty: [0, 0] } : d.mode === 'zones' && d.zones ? d.zones : null;
+    const resMode = boss ? 'boss' : td ? 'tower' : zd ? 'zones' : 'turf';
     if (zd) {
-      const why = ZONE_REASON[zd.reason] || ZONE_REASON.time;
-      const icon = zd.reason === 'knockout' ? 'star' : zd.reason === 'time' ? 'stopwatch' : zd.reason === 'comeback' ? 'wave' : 'shield';
+      const REASON = td ? TOWER_REASON : ZONE_REASON;
+      const why = REASON[zd.reason] || REASON.time;
+      const icon = zd.reason === 'knockout' ? 'star' : zd.reason === 'time' ? 'stopwatch' : zd.reason === 'comeback' || zd.reason === 'sudden-death' ? 'wave' : 'shield';
       awards.match = [{ id: 'zreason', icon, label: why[win ? 0 : 1].toUpperCase(), value: '' }];
       if (zd.overtime) awards.match.push({ id: 'zot', icon: 'stopwatch', label: 'OVERTIME', value: zd.overtimeT > 0 ? `+${fmtTime(zd.overtimeT)}` : '' });
     }
@@ -3946,7 +4046,7 @@ export class Menus {
     // the final count, then the penalty stamps on
     let zc = null;
     if (zd) {
-      const ZC = ZONES.count || 100, W = zd.winner === 1 ? 1 : 0;
+      const ZC = (td ? TOWER.count : ZONES.count) || 100, W = zd.winner === 1 ? 1 : 0;
       const cnt = zd.counts.map((c) => Math.max(0, Math.ceil(c - 1e-6))), pen = zd.penalty;
       const done = (t) => clamp((ZC - cnt[t]) / ZC) * 0.5, penW = (t) => clamp(Math.min(pen[t], cnt[t]) / ZC) * 0.5;
       const pens = [0, 1].map((t) => h('em', { class: 'iw-zres__pen' + (pen[t] > 0 ? '' : ' is-none') }, `+${pen[t]}`));
@@ -3959,7 +4059,7 @@ export class Menus {
       cover = h('div', { class: 'iw-res__cover iw-res__cover--zones iw-in' + (W === 0 ? ' is-a' : ' is-b') },
         h('div', { class: 'iw-cover__names' },
           h('span', { class: 'ta' + (W === 0 ? ' is-win' : '') }, W === 0 ? crownA : null, names[0] || 'Alpha', numA, pens[0]),
-          h('span', { class: 'iw-zres__mid' }, h('i', { html: ZONE_GLYPH }), 'COUNT TO ZERO'),
+          h('span', { class: 'iw-zres__mid' }, h('i', { html: td ? TOWER_GLYPH : ZONE_GLYPH }), td ? 'PUSH TO THE GOAL' : 'COUNT TO ZERO'),
           h('span', { class: 'tb' + (W === 1 ? ' is-win' : '') }, pens[1], numB, names[1] || 'Bravo', W === 1 ? crownB : null)),
         coverBar);
     }

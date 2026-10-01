@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, emit, clamp, lerp } from '../../core/ctx.js';
-import { PLAYER, SUBS } from '../../config.js';
+import { PLAYER, SUBS, subViewScale } from '../../config.js';
 import { Physics, Hit } from '../physics.js';
 import { SUB_KITS, KIT_GHOSTS, netRec, netId, netHurt, netMuted, ghostMute } from './registry.js';
 import { registerSubModel, getSubDef, GEO_KIT } from '../character-weapons.js';
@@ -31,8 +31,8 @@ const V3 = THREE.Vector3;
 const UP = new V3(0, 1, 0), DOWN = new V3(0, -1, 0), ZAX = new V3(0, 0, 1);
 const r2 = (x) => Math.round(x * 100) / 100;
 const GRAV = 24;                 // same as every thrown sub (and the throw-arc preview)
-const SCALE = 1.9;               // prop models are built at hand scale (SubSystem's SUB_SCALE)
-const HIT_R = 0.3;               // shot-down / contact radius of the torpedo in the world (m)
+const SCALE = 1.9;               // prop models are built at hand scale (SubSystem's SUB_SCALE) — [sub-view] drawn × t.vs
+const HIT_R = 0.3;               // shot-down / contact radius of the torpedo in the world (m): NOT the drawn size ([sub-view])
 const _v = new V3(), _v2 = new V3(), _v3 = new V3(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 const _hit = new Hit(), _res = { t: 0, dist: 0 };
 const nearCam = (p, r = 34) => !!G.camera && G.camera.position.distanceToSquared(p) < r * r;
@@ -151,11 +151,11 @@ function finAt(fin, k) {
 // =============================================================================================== world rig
 // per torpedo (its lens brightens as it locks and launches)
 function glowMat(team) { return new THREE.MeshStandardMaterial({ color: 0x111111, emissive: G.teamColors[team].clone(), emissiveIntensity: 1.2, roughness: 0.3 }); }
-function buildRig(team) {
+function buildRig(team, vs = 1) {   // ([sub-view] vs: SUB_VIEW_SCALE.torpedo — drawn that much bigger, visual only)
   const d = getSubDef('torpedo');
   const col = G.teamColors[team];
   const outer = new THREE.Group(), model = new THREE.Group();
-  model.scale.setScalar(SCALE); model.position.y = -d.yc * SCALE;          // the hull axis runs through the outer origin
+  model.scale.setScalar(SCALE * vs); model.position.y = -d.yc * SCALE * vs;          // the hull axis runs through the outer origin
   const body = new THREE.Mesh(d.hullBody, getPlasticMaterial()); body.castShadow = true;
   const ink = new THREE.Mesh(d.hullInk, getInkMaterial(col)); ink.castShadow = true;
   const gm = glowMat(team);
@@ -249,27 +249,25 @@ function use(subs, a, sub) {
   // the throw inks a patch under the thrower's feet
   const g = G.physics.raycast(_v.copy(a.pos).setY(a.pos.y + 0.4), DOWN, 2.5, _hit);
   if (g.hit) { const b = G.level.blocks[g.block]; if (!(b && (b.roof || b.rail || b.perch))) credit(t, G.paint.splat(_v2.copy(g.point).addScaledVector(g.normal, 0.1), sub.feetPaint, a.team, { seed: Math.random() })); }
-  if (a.isLocal || a._nearCamera?.()) {
-    G.audio?.play('bomb_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.6, pitch: 0.92 });
-    G.audio?.play('torpedo_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.7 });
-  }
+  G.cues?.sub('torpedo', 'throw', { owner: a, at: a.pos });   // sfx-cues: its own motor-start throw (src/audio/cues.js)
   emit('sub:use', { actor: a, kind: 'torpedo' });
 }
 // Online, a remote player's torpedo is a ghost: it flies the same arc, but its owner decides the rest — records
 // [3, gid, foe nid, x, y, z] the lock, [4, gid, x, y, z, dx, dy, dz, speed] its swim (10 a second, dead-reckoned in
 // between), [1, gid, x, y, z, full] the burst, [2, gid, shot] an end without one. Hits on a ghost go to its owner.
 function spawn(subs, a, sub, pos, vel, ghost, gid) {
-  const mesh = buildRig(a.team);
+  const vs = subViewScale('torpedo');   // [sub-view]
+  const mesh = buildRig(a.team, vs);
   const scene = sceneOf(subs);
   scene.add(mesh);
   const t = {
     kind: 'torpedo', sub, owner: a, team: a.team, pos, prev: pos.clone(), vel, dir: vel.clone().normalize(), speed: 0,
     state: 'fly', t: 0, age: 0, hp: sub.hp, target: null, mesh, scene, ring: null, sp: !!a.specialActive,
     fin: 0, propOpen: 0, propA: 0, roll: Math.random() * 6, glowI: 0.5, hover: new V3(), whirr: null, flash: 0,
-    ghost, gid, net: null, sendT: 0, burst: false,
+    ghost, gid, net: null, sendT: 0, burst: false, vs,
   };
   list.push(t);
-  if (nearCam(pos, 40)) t.whirr = G.audio?.loop?.('torpedo_whirr', { pos, volume: 0.35, pitch: 0.8 }) || null;
+  t.whirr = null;   // sfx-cues: the whirr (and the lock tone on its target) come from src/audio/cues.js
   orient(t, t.dir);
   mesh.position.copy(pos);
   return t;
@@ -282,7 +280,7 @@ function ghost(a, d) {
   if (op === 0) {
     if (list.some((x) => x.gid === gid)) return;
     spawn(G.subs, a, SUBS.torpedo, new V3(d[2], d[3], d[4]), new V3(d[5], d[6], d[7]), true, gid);
-    if (a._nearCamera?.()) { G.audio?.play('bomb_throw', { pos: a.pos, volume: 0.6, pitch: 0.92 }); G.audio?.play('torpedo_throw', { pos: a.pos, volume: 0.7 }); }
+    G.cues?.sub('torpedo', 'throw', { owner: a, at: a.pos });   // sfx-cues
     return;
   }
   const t = list.find((x) => x.ghost && x.gid === gid && live(x));
@@ -377,7 +375,7 @@ function startLock(t, e) {
   t.vel.set(0, 0, 0); t.hover.copy(t.pos);
   t.ring = makeRing(t.team); t.ringT = 0;
   t.scene.add(t.ring);
-  if (nearCam(t.pos, 40)) G.audio?.play('torpedo_transform', { pos: t.pos, volume: 0.8 });
+  G.cues?.one('torpedo_transform', { at: t.pos, owner: t.owner, team: t.team, kind: 'land', sub: true, vol: 0.8 });   // sfx-cues: through the cue mix
   if (e?.isLocal || t.owner.isLocal) G.audio?.play('torpedo_lock', { volume: e?.isLocal ? 0.7 : 0.45 });
   if (e) emit('sub:arm', { kind: 'torpedo', pos: t.pos.clone(), team: t.team, radius: t.sub.radius, target: e, actor: t.owner });
 }
@@ -394,7 +392,7 @@ function unfold(t, h) {
   t.pos.set(t.hover.x + (Math.random() - 0.5) * shake, t.hover.y + Math.sin(t.t * 13) * 0.025 + 0.06 * backOut(k, 1.5) * 0.4, t.hover.z + (Math.random() - 0.5) * shake);
   if (t.t >= s.unfoldTime) {
     t.state = 'launch'; t.t = 0; t.speed = s.launchSpeed0;
-    if (nearCam(t.pos, 40)) G.audio?.play('torpedo_launch', { pos: t.pos, volume: 0.8 });
+    if (nearCam(t.pos, 40) && !G.cues?.allySub(t.owner, t.team)) G.audio?.play('torpedo_launch', { pos: t.pos, volume: 0.8 });   // (a teammate's: none — cues.js allySub)
     if (nearCam(t.pos, 30)) G.fx?.burst(_v.copy(t.pos).addScaledVector(t.dir, -0.4), _v2.copy(t.dir).negate(), G.teamColors[t.team], { count: 4, speed: 1.8, size: 0.04, sheet: false });
   }
 }
@@ -493,8 +491,7 @@ function burst(t, full) {
     credit(t, area);
   } else credit(t, G.paint.splat(pc, s.fallbackPaint, t.team, { seed: Math.random() }));
   G.fx?.explosion(c, col, full ? s.radius : s.radius * 0.8);
-  G.audio?.play('bomb_explode', { pos: c, volume: full ? 0.75 : 0.6, pitch: full ? 1.08 : 1.15 });
-  G.audio?.play('torpedo_pop', { pos: c, volume: full ? 0.9 : 0.6, pitch: full ? 1 : 1.12 });
+  G.cues?.sub('torpedo', 'boom', { owner: t.owner, team: t.team, at: c, vol: full ? 1 : 0.75, pitch: full ? 0.95 : 1.12 });   // sfx-cues: its own burst
   emit('shake', { pos: c.clone(), amount: full ? 0.55 : 0.45 });
   emit('bomb:explode', { actor: t.owner, pos: c.clone(), team: t.team, radius: s.radius, kind: 'torpedo' });
   for (const e of G.actors) {

@@ -969,6 +969,95 @@ body.iw-dio-on .iw-xh, body.iw-dio-on .iw-mks, body.iw-dio-on .iw-map, body.iw-d
 .iw-zo.is-otoff .iw-zo__otbar i { background: #fff; animation: iw-zo-blink .5s steps(2) infinite; }
 @keyframes iw-zo-blink { 50% { opacity: .45; } }
 
+/* ------------------------------------------------------------------ Tower Command (src/ui/hud.js _updTower / _updTowerPtr)
+   Hidden unless the HUD root has .is-tower (frame.tower present). The score badges are Zone Control's (.iw-zc). The
+   track is drawn from your side: your half left in your ink, your goal at the right end, so your push runs left → right. */
+.iw-tw, .iw-tptr { display: none; }
+.iw-hud.is-tower .iw-zc { display: block; }
+.iw-hud.is-tower .iw-tw { display: flex; }
+.iw-hud.is-tower .iw-timer__drip { display: none; }
+.iw-hud.is-tower .iw-hud__top { gap: calc(var(--u) * 1.05); }
+.iw-tw { position: absolute; left: 50%; top: calc(100% + var(--u) * .9); translate: -50% 0; flex-direction: column; align-items: center; gap: calc(var(--u) * .35); }
+.iw-tw__track { position: relative; width: calc(var(--u) * 22); height: calc(var(--u) * .78); border-radius: 99px; background: var(--k);
+  box-shadow: 0 0 0 2.5px #fff, 0 0 0 5px var(--k), 0 calc(var(--u) * .3) 0 5px rgba(0, 0, 0, .3); }
+.iw-tw__half { position: absolute; top: 3px; bottom: 3px; border-radius: 99px; opacity: .6; }
+.iw-tw__half.is-a { left: 3px; right: calc((1 - var(--mid, .5)) * 100%); background: var(--self-dark); }
+.iw-tw__half.is-b { right: 3px; left: calc(var(--mid, .5) * 100%); background: var(--enemy-dark); }
+.iw-tw__mid { position: absolute; left: calc(var(--mid, .5) * 100%); top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 2px; background: #fff; opacity: .85; }
+.iw-tw__goal { position: absolute; top: 50%; width: calc(var(--u) * 1.15); height: calc(var(--u) * 1.15); margin-top: calc(var(--u) * -.575); border-radius: 50%; box-shadow: 0 0 0 2px var(--k), 0 0 0 4px #fff; }
+.iw-tw__goal.is-a { left: calc(var(--u) * -.6); background: var(--enemy); }   /* their goal: the far end of your half */
+.iw-tw__goal.is-b { right: calc(var(--u) * -.6); background: var(--self); }    /* yours: the far end of theirs */
+.iw-tw__cps { position: absolute; inset: 0; }
+.iw-tw__cp { position: absolute; left: calc(var(--x) * 100%); top: 50%; width: calc(var(--u) * .52); height: calc(var(--u) * .52); margin: calc(var(--u) * -.26) 0 0 calc(var(--u) * -.26);
+  rotate: 45deg; background: var(--self); box-shadow: 0 0 0 1.5px var(--k); transition: background .3s; }
+.iw-tw__cp.is-theirs { background: var(--enemy); }
+.iw-tw__cp.is-clear { background: #6b6f7a; }
+.iw-tw__best { position: absolute; left: calc(var(--x, .5) * 100%); top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px; transition: left .4s var(--out); }
+.iw-tw__best.is-a { background: var(--self-light); }
+.iw-tw__best.is-b { background: var(--enemy-light); }
+.iw-tw__tower { position: absolute; left: calc(var(--x, .5) * 100%); top: 50%; width: calc(var(--u) * 2.5); height: calc(var(--u) * 2.5); translate: -50% -62%; --tc: #ffd54a; z-index: 2; transition: left .12s linear; }
+.iw-tw__tower[data-side="mine"] { --tc: var(--self); }
+.iw-tw__tower[data-side="theirs"] { --tc: var(--enemy); }
+.iw-tw__ti { display: block; width: 100%; height: 100%; color: var(--tc); filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .35)); transition: color .25s; }
+.iw-tw__ti svg { width: 100%; height: 100%; }
+.iw-tw__pips { position: absolute; left: 50%; top: 100%; translate: -50% 2px; display: flex; gap: 2px; }
+.iw-tw__pips i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 255, 255, .22); box-shadow: 0 0 0 1px var(--k); }
+.iw-tw__pips i.is-on { background: var(--tc); box-shadow: 0 0 0 1px var(--k), 0 0 4px var(--tc); }
+.iw-tw__ring { position: absolute; inset: -14%; border-radius: 50%; opacity: 0; background: conic-gradient(#fff calc(var(--k, 0) * 360deg), rgba(255, 255, 255, .16) 0);
+  -webkit-mask: radial-gradient(circle, transparent 56%, #000 59%); mask: radial-gradient(circle, transparent 56%, #000 59%); transition: opacity .2s; }
+.iw-tw__tower.is-cp .iw-tw__ring { opacity: 1; }
+.iw-tw__tower.is-moving .iw-tw__ti { animation: iw-tw-roll .45s ease-in-out infinite alternate; }
+@keyframes iw-tw-roll { to { translate: 0 -7%; } }
+.iw-tw__tower.is-contested .iw-tw__ti { animation: iw-tw-contest .3s steps(2) infinite; }
+@keyframes iw-tw-contest { 50% { color: #fff; } }
+.iw-tw__tower.is-flip .iw-tw__ti { animation: iw-zo-flip .5s var(--spring2); }
+.iw-tw__status { display: none; margin-top: calc(var(--u) * 1.05); padding: .3em .8em .28em; border-radius: 999px; background: rgba(14, 11, 22, .84); box-shadow: 0 0 0 2px var(--tc, #ffd54a);
+  font: 800 calc(var(--u) * .86) / 1 'Rubik', sans-serif; letter-spacing: .12em; color: #fff; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.iw-tw[data-side="mine"] { --tc: var(--self); }
+.iw-tw[data-side="theirs"] { --tc: var(--enemy); }
+.iw-tw.has-status .iw-tw__status { display: block; animation: iw-pop .4s var(--spring2) backwards; }
+.iw-tw__ot { display: none; }
+.iw-tw.is-ot .iw-tw__ot { order: -1; display: flex; padding: calc(var(--u) * .3) calc(var(--u) * 1) calc(var(--u) * .35); border-radius: calc(var(--u) * .9); margin-bottom: calc(var(--u) * .4);
+  background: var(--k); box-shadow: 0 0 0 2.5px #ffe27a, 0 0 0 5px var(--k), 0 calc(var(--u) * .3) 0 5px rgba(0, 0, 0, .3); animation: iw-pop .5s var(--spring2) backwards, iw-zo-ot 1s ease-in-out infinite .5s; }
+.iw-tw__ot .iw-display { font-size: calc(var(--u) * 1.5); letter-spacing: .06em; color: #ffe27a; -webkit-text-stroke: 0; text-shadow: none; }
+/* the pointer to the tower: over it when it's on screen, at the screen edge (with an arrow out) when it isn't */
+.iw-hud.is-tower .iw-tptr.is-on { display: block; }
+.iw-twts { position: absolute; inset: 0; pointer-events: none; z-index: 2; display: none; }
+.iw-hud.is-tower .iw-twts { display: block; }
+/* the countdown over a checkpoint: a dark disc, the seconds left, a ring sweeping clockwise in quarters (the team's ink
+   for seconds that score, grey for dummy seconds), a blinking outer ring while the grace runs */
+.iw-twt { position: absolute; left: 0; top: 0; width: 62px; height: 62px; margin: -31px 0 0 -31px; display: none; transform-origin: 50% 50%;
+  --tc: var(--enemy); opacity: .6; transition: opacity .25s; }
+.iw-twt[data-side="mine"] { --tc: var(--self); }
+.iw-twt.is-on { display: block; }
+.iw-twt.is-active { opacity: 1; }
+.iw-twt svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.iw-twt circle { fill: none; transform: rotate(-90deg); transform-origin: 28px 28px; }
+.iw-twt .iw-twt__bg { fill: rgba(21, 18, 28, .82); stroke: #15121c; stroke-width: 7.5; }
+.iw-twt__dum { stroke: rgba(210, 210, 220, .26); stroke-width: 4.6; }
+.iw-twt__done { stroke: #a3a3ae; stroke-width: 4.6; }
+.iw-twt__run { stroke: var(--tc); stroke-width: 4.6; filter: drop-shadow(0 0 2.5px var(--tc)); }
+.iw-twt__grace { stroke: #fff; stroke-width: 2.2; opacity: 0; }
+.iw-twt.is-grace .iw-twt__grace { opacity: 1; animation: iw-twt-blink .5s steps(2, jump-none) infinite; }
+@keyframes iw-twt-blink { 50% { opacity: .25; } }
+.iw-twt__tick { stroke: #15121c; stroke-width: 2.2; stroke-linecap: round; }
+.iw-twt b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 400 21px / 1 'Titan One', sans-serif; color: #fff;
+  -webkit-text-stroke: 4px #15121c; paint-order: stroke fill; letter-spacing: -.02em; }
+.iw-twt::after { content: ''; position: absolute; left: 50%; bottom: -9px; margin-left: -7px; border: 7px solid transparent; border-top-color: #15121c; border-bottom: 0; }
+.iw-tptr { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 3; --pc: #ffd54a; }
+.iw-tptr[data-side="mine"] { --pc: var(--self); }
+.iw-tptr[data-side="theirs"] { --pc: var(--enemy); }
+.iw-tptr__ico { position: absolute; left: calc(var(--u) * -1.3); top: calc(var(--u) * -1.3); width: calc(var(--u) * 2.6); height: calc(var(--u) * 2.6); color: var(--pc);
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .45)); animation: iw-tptr-bob 1.2s ease-in-out infinite; }
+.iw-tptr__ico svg { width: 100%; height: 100%; }
+@keyframes iw-tptr-bob { 50% { translate: 0 calc(var(--u) * -.25); } }
+.iw-tptr__d { position: absolute; left: 0; top: calc(var(--u) * 1.4); translate: -50% 0; font: 800 calc(var(--u) * .8) / 1 'Rubik', sans-serif; color: #fff;
+  text-shadow: 0 1px 0 var(--k), 0 0 3px var(--k); white-space: nowrap; }
+.iw-tptr__arrow { display: none; position: absolute; left: 0; top: 0; width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.2); margin: calc(var(--u) * -.6) 0 0 calc(var(--u) * -.55);
+  background: var(--pc); clip-path: polygon(0 0, 100% 50%, 0 100%, 22% 50%); transform: rotate(var(--rot, 0rad)) translateX(calc(var(--u) * 2.1)); filter: drop-shadow(0 0 1px var(--k)); }
+.iw-tptr.is-edge .iw-tptr__arrow { display: block; }
+.iw-hud.is-mapopen .iw-tptr { opacity: 0; }
+
 /* zone call-outs: the kill call-out's ribbon language, in the ink of the team the news favours */
 .iw-zcalls { position: absolute; left: 50%; top: 33%; width: 0; height: 0; display: flex; flex-direction: column; align-items: center; }
 .iw-zcall { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: .3em; margin-bottom: calc(var(--u) * .9); isolation: isolate; white-space: nowrap; animation: iw-call 2.6s forwards; }
@@ -1042,6 +1131,55 @@ body.iw-dio-on .iw-xh, body.iw-dio-on .iw-mks, body.iw-dio-on .iw-map, body.iw-d
 .iw-dio-z.is-icon .iw-dio-z__tag { padding: calc(var(--u) * .22); }
 .iw-dio-z.is-icon .iw-dio-z__l { display: none; }
 
+
+/* ------------------------------------------------------------------ who's ahead (src/ui/hud-lead.js)
+   Each roster group grows a little (the team ahead) or shrinks a little (the team behind), scaled from its inner edge so
+   it never runs into the timer or the count badges, and hangs a small bouncing banner under itself — LEAD / DANGER in
+   that team's ink, clear of the "you" caret, the respawn numbers and everything hanging under the timer. Taking the
+   lead: a flash behind the group, its badges light up in a wave from the inner edge, a ring + ink drops burst round the
+   banner. The banner is counter-scaled so it keeps its size whatever its group's. */
+.iw-squad { position: relative; isolation: isolate; transition: scale .42s cubic-bezier(.3, 1.3, .55, 1); }
+.iw-squad--a { transform-origin: 100% 50%; }
+.iw-squad--b { transform-origin: 0 50%; }
+.iw-squad.is-grow { scale: 1.18; }
+.iw-squad.is-shrink { scale: .86; }
+
+.iw-lead { position: absolute; left: 50%; top: calc(100% + var(--u) * 1.45); width: 0; height: 0; display: flex; justify-content: center; align-items: flex-start; z-index: 2; pointer-events: none;
+  transition: scale .42s cubic-bezier(.3, 1.3, .55, 1); }
+.iw-squad.is-grow .iw-lead { scale: .847; }     /* 1 / 1.18 */
+.iw-squad.is-shrink .iw-lead { scale: 1.163; }  /* 1 / .86 */
+.iw-lead__tag { flex: none; display: block; font-size: calc(var(--u) * 1.22); border-radius: 999px; transform-origin: 50% 100%; rotate: -4deg; opacity: 0; scale: .3;
+  box-shadow: 0 0 0 2.5px #fff, 0 0 0 5px var(--k), 0 calc(var(--u) * .3) 0 5px rgba(0, 0, 0, .3); transition: opacity .18s, scale .25s var(--out); }
+.iw-lead--b .iw-lead__tag { rotate: 4deg; }
+.iw-lead__in { display: flex; align-items: center; gap: .3em; padding: .3em .8em .32em .5em; border-radius: 999px; white-space: nowrap;
+  background: linear-gradient(180deg, var(--tc-l) -45%, var(--tc) 45%, var(--tc-d) 150%); box-shadow: inset 0 .12em 0 rgba(255, 255, 255, .35); }
+.iw-lead__ico { display: block; flex: none; width: 1.2em; height: 1.2em; filter: drop-shadow(0 .06em 0 var(--k)); }
+.iw-lead__ico svg { display: block; width: 100%; height: 100%; }
+.iw-lead__txt { font-size: 1em; line-height: 1; letter-spacing: .06em; color: #fff; }
+.iw-lead.is-on .iw-lead__tag { opacity: 1; scale: 1; animation: iw-lead-in .55s var(--spring2) backwards, iw-lead-bounce .9s .55s infinite; }
+/* DANGER: hazard stripes (dark + the team's ink) round the pill, a quicker two-hop bounce with a tilt, a pulsing glow */
+.iw-lead.is-danger .iw-lead__tag { padding: .2em; background: repeating-linear-gradient(-45deg, var(--k) 0 .3em, var(--tc) .3em .6em); }
+.iw-lead.is-on.is-danger .iw-lead__tag { animation: iw-lead-in .55s var(--spring2) backwards, iw-lead-alarm 1.1s .55s infinite; }
+.iw-lead.is-on.is-danger .iw-lead__in { animation: iw-lead-pulse .55s ease-in-out infinite alternate; }
+@keyframes iw-lead-in { 0% { opacity: 0; scale: .2; translate: 0 calc(var(--u) * -1.4); } 55% { opacity: 1; scale: 1.22; translate: 0 0; } 100% { scale: 1; } }
+@keyframes iw-lead-bounce {
+  0% { translate: 0 0; scale: 1.1 .88; animation-timing-function: cubic-bezier(.25, .8, .4, 1); }
+  14% { scale: .95 1.06; }
+  45% { translate: 0 calc(var(--u) * -.6); scale: 1; animation-timing-function: cubic-bezier(.6, 0, .85, .35); }
+  86% { translate: 0 0; scale: 1; }
+  100% { translate: 0 0; scale: 1.1 .88; } }
+@keyframes iw-lead-alarm {
+  0% { translate: 0 0; rotate: -6deg; scale: 1.08 .9; animation-timing-function: cubic-bezier(.25, .8, .4, 1); }
+  22% { translate: 0 calc(var(--u) * -.5); rotate: 2deg; scale: 1; animation-timing-function: cubic-bezier(.6, 0, .85, .35); }
+  44% { translate: 0 0; rotate: 6deg; scale: 1.08 .9; animation-timing-function: cubic-bezier(.25, .8, .4, 1); }
+  66% { translate: 0 calc(var(--u) * -.5); rotate: -2deg; scale: 1; animation-timing-function: cubic-bezier(.6, 0, .85, .35); }
+  88%, 100% { translate: 0 0; rotate: -6deg; scale: 1.08 .9; } }
+@keyframes iw-lead-pulse { to { filter: brightness(1.22) saturate(1.15); } }
+/* the take-the-lead burst round the banner */
+@media (prefers-reduced-motion: reduce) {
+  .iw-lead.is-on .iw-lead__tag, .iw-lead.is-on.is-danger .iw-lead__tag { animation: iw-pop .3s ease-out backwards; }
+  .iw-lead.is-on.is-danger .iw-lead__in { animation: none; }
+}
 
 /* =====================================================================================
    BOSS MODE (src/ui/hud-boss.js) — boss bar, title card, move callouts, damage numbers, phase banners, endings.

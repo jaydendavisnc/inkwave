@@ -542,9 +542,9 @@ on('bomb:explode', (e) => {
 
 // ---------------------------------------------------------------------------------------------- bots
 // an enemy charger / long-range weapon lining up on this bot
-function lineThreat(a) {
+function lineThreat(a, brain) {
   for (const e of G.actors || []) {
-    if (e.team === a.team || !e.alive) continue;
+    if (e.team === a.team || !e.alive || (brain?.sight && !brain.sight.sees(e))) continue;   // (one the bot can see)
     const kind = e.weapon?.kind, KB = MAIN_KITS[kind]?.bot;
     if (!(CHARGES[kind] || LONG[kind] || KB?.long || KB?.charges)) continue;
     const r = e.weaponRunner; if (!r || !(r.charging || r.firingT > 0 || r.streaming || r.burstT > 0)) continue;
@@ -563,7 +563,7 @@ const bot = {
     const bb = brain._brolly || (brain._brolly = { holdUntil: 0, nextShield: 0, launch: false, advanceUntil: 0 });
     // open the canopy when taking fire, or when a long-range weapon is lining up from roughly ahead
     if (k.state === 'ready' && k.grow > 0.9 && bb.holdUntil <= G.time && G.time >= bb.nextShield && dist < 18) {
-      const thr = lineThreat(a);
+      const thr = lineThreat(a, brain);
       const ahead = thr && Math.abs(angleDiff(a.aimYaw, Math.atan2(thr.pos.x - a.pos.x, thr.pos.z - a.pos.z))) < 0.9;
       const hurt = a.lastDamage < 0.45 && a.lastAttacker && a.lastAttacker.alive && Math.abs(angleDiff(a.aimYaw, Math.atan2(a.lastAttacker.pos.x - a.pos.x, a.lastAttacker.pos.z - a.pos.z))) < 1.0;
       const disc = brain.diff?.fireDiscipline ?? 0.8;

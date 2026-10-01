@@ -69,6 +69,56 @@
       "sm": "assets/stages/terraces-dusk-sm.webp"
     }
   },
+  "nantai": {
+    "day": {
+      "src": "assets/stages/nantai-day.webp",
+      "sm": "assets/stages/nantai-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/nantai-dusk.webp",
+      "sm": "assets/stages/nantai-dusk-sm.webp"
+    }
+  },
+  "craters": {
+    "day": {
+      "src": "assets/stages/craters-day.webp",
+      "sm": "assets/stages/craters-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/craters-dusk.webp",
+      "sm": "assets/stages/craters-dusk-sm.webp"
+    }
+  },
+  "calamari": {
+    "day": {
+      "src": "assets/stages/calamari-day.webp",
+      "sm": "assets/stages/calamari-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/calamari-dusk.webp",
+      "sm": "assets/stages/calamari-dusk-sm.webp"
+    }
+  },
+  "spirhalite": {
+    "day": {
+      "src": "assets/stages/spirhalite-day.webp",
+      "sm": "assets/stages/spirhalite-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/spirhalite-dusk.webp",
+      "sm": "assets/stages/spirhalite-dusk-sm.webp"
+    }
+  },
+  "treehills": {
+    "day": {
+      "src": "assets/stages/treehills-day.webp",
+      "sm": "assets/stages/treehills-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/treehills-dusk.webp",
+      "sm": "assets/stages/treehills-dusk-sm.webp"
+    }
+  },
   "cargo": {
     "day": {
       "src": "assets/stages/cargo-day.webp",

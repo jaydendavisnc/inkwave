@@ -28,12 +28,15 @@
 //   percents            accepted as 0..100 or 0..1.
 // Boss mode (docs/BOSS.md): src/ui/hud-boss.js (hud.boss) adds the boss bar / title card / callouts / damage numbers and
 // the endings; the roster slots show the 8-kid squad in squad ink. It switches on match.mode === 'boss' or boss:spawn.
+// Who's ahead: src/ui/hud-lead.js (hud.lead) grows / shrinks each team's roster group, hangs a bouncing LEAD / DANGER
+// banner under it and flashes + stings when a team takes the lead (Turf War, Zone Control, Tower Command).
 import { h, clamp, colorVars, toHex, fmtTime, fmtInt, splatSVG, splatShape, pct, shade, lerp, easeOutBack, easeOutCubic, restartAnim, prefersReducedMotion } from './ui-util.js';
 import { SQUID, SPLAT_ICON, DEATH_ICON, GLYPHS, SUB_ICONS, WEAPON_ICONS, richText, keycap, specialIcon, weaponIcon } from './ui-icons.js';
-import { WEAPONS, SPECIALS, TEAM_NAMES, SUB, PLAYER, MATCH, ZONES } from '../config.js';
+import { WEAPONS, SPECIALS, TEAM_NAMES, SUB, PLAYER, MATCH, ZONES, TOWER } from '../config.js';
 import { on, G } from '../core/ctx.js';
 import { SFX } from '../audio/audio.js';
 import { BossHud } from './hud-boss.js';
+import { LeadHud } from './hud-lead.js';
 import { installBossAudio } from '../audio/bossAudio.js';
 import { bossEmblem, BOSS_NAME, BOSS_EPITHET } from './boss-art.js';
 
@@ -62,6 +65,8 @@ const DROP_ICON = `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 5 C3
 // Zone Control: a zone box (corner brackets round a rounded square); fill = currentColor
 const ZONE_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="7" width="18" height="18" rx="3.5" fill="currentColor" stroke="${K}" stroke-width="3"/><path d="M3.5 11 V6 a2.5 2.5 0 0 1 2.5 -2.5 H11 M21 3.5 H26 a2.5 2.5 0 0 1 2.5 2.5 V11 M28.5 21 V26 a2.5 2.5 0 0 1 -2.5 2.5 H21 M11 28.5 H6 a2.5 2.5 0 0 1 -2.5 -2.5 V21" fill="none" stroke="${K}" stroke-width="5" stroke-linecap="round"/><path d="M3.5 11 V6 a2.5 2.5 0 0 1 2.5 -2.5 H11 M21 3.5 H26 a2.5 2.5 0 0 1 2.5 2.5 V11 M28.5 21 V26 a2.5 2.5 0 0 1 -2.5 2.5 H21 M11 28.5 H6 a2.5 2.5 0 0 1 -2.5 -2.5 V21" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 const ZONE_NEUTRAL = '#dcd7e6';
+// Tower Command: a platform with its mast, beacon and signal arcs
+const TOWER_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9.5 12.5 a8 8 0 0 1 13 0" fill="none" stroke="${K}" stroke-width="4.6" stroke-linecap="round"/><path d="M9.5 12.5 a8 8 0 0 1 13 0" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/><rect x="14.6" y="7" width="2.8" height="14" fill="#fff" stroke="${K}" stroke-width="2"/><circle cx="16" cy="7" r="3.3" fill="currentColor" stroke="${K}" stroke-width="2.4"/><path d="M4.5 20 h23 l-2.6 7.5 h-17.8 z" fill="currentColor" stroke="${K}" stroke-width="3" stroke-linejoin="round"/></svg>`;
 // death marker: a squid-skull (mantle + fins, X eyes) in the victim's ink (currentColor), white-rimmed so it reads on
 // any ink or deck. Shared with the TAB map diorama.
 const DM_HEAD = 'M32 7 C36.5 7 50 20 54.5 26.5 C56.5 29.5 54.5 32.5 50.5 31.7 L46 31 L46 41 C46 48 41.5 51 32 51 C22.5 51 18 48 18 41 L18 31 L13.5 31.7 C9.5 32.5 7.5 29.5 9.5 26.5 C14 20 27.5 7 32 7 Z';
@@ -139,6 +144,7 @@ export class HUD {
     addEventListener('resize', this._onResize);
     this._bindBus();
     this.boss = new BossHud(this);
+    this.lead = new LeadHud(this);   // (after the build: it hangs its banners on the roster groups)
     installBossAudio();   // boss-mode sfx + music director (idle outside boss matches)
   }
 
@@ -185,6 +191,21 @@ export class HUD {
       h('div', { class: 'iw-zo__chip' }, this.zoIcons, this.zoLabel),
       h('div', { class: 'iw-zo__shift' }, h('i', { html: GLYPHS.clock || '' }), h('span', null, 'ZONE SHIFT IN '), this.zoShiftN));
     this.timer.appendChild(this.zo);
+    // Tower Command: the tower track hanging under the timer (drawn from your side: your goal at the right end, so your
+    // push always runs left → right), checkpoints, each team's best, the tower with its riders, a status line; the Zone
+    // Control count badges show the scores. Plus a pointer to the tower whenever you're off it. (Hidden unless the frame
+    // carries `tower`.)
+    this.twTower = h('span', { class: 'iw-tw__tower' }, h('i', { class: 'iw-tw__ring' }), h('i', { class: 'iw-tw__ti', html: TOWER_ICON }),
+      h('span', { class: 'iw-tw__pips' }, h('i'), h('i'), h('i'), h('i')));
+    this.twBest = [h('i', { class: 'iw-tw__best is-a' }), h('i', { class: 'iw-tw__best is-b' })];
+    this.twCps = h('span', { class: 'iw-tw__cps' });
+    this.twTrack = h('span', { class: 'iw-tw__track' }, h('i', { class: 'iw-tw__half is-a' }), h('i', { class: 'iw-tw__half is-b' }), h('i', { class: 'iw-tw__mid' }),
+      h('i', { class: 'iw-tw__goal is-a' }), h('i', { class: 'iw-tw__goal is-b' }), this.twCps, ...this.twBest, this.twTower);
+    this.twStatus = h('span', { class: 'iw-tw__status' });
+    this.tw = h('div', { class: 'iw-tw' }, h('div', { class: 'iw-tw__ot' }, h('span', { class: 'iw-display' }, 'OVERTIME')), this.twTrack, this.twStatus);
+    this.timer.appendChild(this.tw);
+    this.tptr = h('div', { class: 'iw-tptr' }, h('i', { class: 'iw-tptr__arrow' }), h('span', { class: 'iw-tptr__ico', html: TOWER_ICON }), h('b', { class: 'iw-tptr__d' }));
+    this.twTimers = h('div', { class: 'iw-twts' });   // Tower Command: a countdown over each uncleared checkpoint
     this.top = h('div', { class: 'iw-hud__top' }, this.squads[0], this.zc[0], this.timer, this.zc[1], this.squads[1]);
 
     // ---- special gauge (liquid orb) + turf total
@@ -310,7 +331,7 @@ export class HUD {
     this.callouts = h('div', { class: 'iw-callouts' });
     this.zcalls = h('div', { class: 'iw-zcalls' });
 
-    el.append(this.vig, this.canvas, this.dmLayer, this.markerLayer, this.cheerLayer, this.ddLayer, this.top, this.sp, this.subBadge, this.turfEl, this.feedEl, this.xh,
+    el.append(this.vig, this.canvas, this.dmLayer, this.markerLayer, this.tptr, this.twTimers, this.cheerLayer, this.ddLayer, this.top, this.sp, this.subBadge, this.turfEl, this.feedEl, this.xh,
       this.kcards, this.callouts, this.zcalls, this.promptEl, this.mapDim, this.map, this.fpsEl, this.countLayer, this.bannerLayer, this.splatLayer, this.jnote, this.poisonVig, this.statusEl);
     this.root.appendChild(el);
 
@@ -379,6 +400,8 @@ export class HUD {
     this._updPrompt(this.boss.on ? this.boss.prompt(f.prompt) : f.prompt);
     this._updFps(f.fps, dt);
     this._updZones(f.zones, dt);
+    this._updTower(f.tower, dt);
+    this.lead.update(dt, f);
     this.boss.update(dt);
   }
 
@@ -524,6 +547,7 @@ export class HUD {
 
   judge(opts = {}) {
     if (opts && opts.mode === 'zones') return this._judgeZones(opts);
+    if (opts && opts.mode === 'tower') return this._judgeZones({ ...opts, penalty: [0, 0], icon: TOWER_ICON });   // (the same count reveal)
     return this._judgeTurf(opts);
   }
 
@@ -659,6 +683,11 @@ export class HUD {
       on('zones:overtime', (e) => this._zOvertime(e)),
       on('zones:end', (e) => this._zEnd(e)),
       on('zones:zone', (e) => this._zZone(e)),
+      on('tower:control', (e) => this._twControl(e)),
+      on('tower:checkpoint', (e) => this._twCheckpoint(e)),
+      on('tower:contest', (e) => this._twContest(e)),
+      on('tower:overtime', (e) => this._twLive() && this._zOvertime(e)),
+      on('tower:end', (e) => this._zEnd(e)),
       on('match:state', ({ state, match }) => {
         if (!match || match.attract) return;
         if (state === 'intro') this._startMatchHud(match);
@@ -675,6 +704,7 @@ export class HUD {
     this.kcards.innerHTML = ''; this.callouts.innerHTML = ''; this.tpops.innerHTML = '';
     this._updDeaths(null); this.jnote.classList.remove('is-on');
     this.zcalls.innerHTML = ''; this._zObj = null; this._zKO = null; this._zTick = [null, null]; this._L.zKey = null;
+    this._L.tOn = null; this._L.tCps = null; this._twContestT = 0;
     G.music?.setOvertime?.(false);
     this.el.classList.remove('is-live');
     this._L.turfTxt = null;
@@ -927,7 +957,7 @@ export class HUD {
   // objective (CENTRE / YOUR SIDE / ENEMY SIDE, relative to the viewer), colours each of its zones by holder and shows
   // each zone's live ink share (the ticks = the 80 % needed to take it); then the rotation hint or the OVERTIME badge.
   _zMe() { const a = this._local(); return a && (a.team === 0 || a.team === 1) ? a.team : 0; }
-  _zLive() { return this._live() && !!(this.lab || (G.match && G.match.zones)); }
+  _zLive() { return this._live() && !!(this.lab || (G.match && (G.match.zones || G.match.tower))); }   // (Tower Command shares the banners)
   _zHex(t) { return t === 0 || t === 1 ? toHex(G.teamHex?.[t], t ? '#2f5bff' : '#ff8a14') : '#ffffff'; }
   _zLabel(id, me) { return id === 'center' ? ZONE_LABEL.center : (id === 'sideA' ? 0 : 1) === me ? ZONE_LABEL.home : ZONE_LABEL.away; }
 
@@ -944,7 +974,7 @@ export class HUD {
     this._zObj = z.active;
     // ---- team counters
     for (let t = 0; t < 2; t++) {
-      const el = this.zc[t];
+      const el = this.zc[t ^ me];   // (the HUD is drawn from your side: your team's badge left, in your colour)
       if (!el._num) { el._num = el.querySelector('.iw-zc__num'); el._pb = el.querySelector('.iw-zc__pb'); }
       // count (the score) and penalty (apart: not part of the score) as whole numbers, like the judge and results
       const cnt = Math.max(0, Math.ceil((z.count?.[t] ?? 100) - 1e-6));
@@ -1018,11 +1048,210 @@ export class HUD {
     void dt;
   }
 
+  // ---- Tower Command (frame.tower = TowerCommand.state() + viewer + onTower): the score badges (the Zone Control
+  // ones: count 100 → 0, fill toward the timer, the tower tab while that team controls it), the track under the timer
+  // and the pointer to the tower
+  _twLive() { return this._live() && !!(G.match && G.match.tower); }
+  _updTower(z, dt) {
+    const L = this._L;
+    const on = !!z;
+    if (on !== L.tOn) {
+      L.tOn = on;
+      this.el.classList.toggle('is-tower', on);
+      for (const el of this.zc) { const hold = el.querySelector('.iw-zc__hold'); if (hold) hold.innerHTML = on ? TOWER_ICON : ZONE_ICON; }
+      L.zc0 = L.zc1 = L.tKey = L.tCps = L.tSt = null;
+    }
+    if (!on) { if (L.tpOn) { L.tpOn = false; this.tptr.classList.remove('is-on'); } if (L.twtKey) { L.twtKey = null; this.twTimers.replaceChildren(); } return; }
+    const me = z.viewer === 0 || z.viewer === 1 ? z.viewer : this._zMe(), them = 1 - me;
+    // ---- score badges (your team's on the left)
+    for (let t = 0; t < 2; t++) {
+      const el = this.zc[t ^ me];
+      if (!el._num) { el._num = el.querySelector('.iw-zc__num'); el._pb = el.querySelector('.iw-zc__pb'); }
+      const cnt = Math.max(0, Math.round(z.score?.[t] ?? 100)), hold = z.owner === t;
+      const key = `${cnt}|${hold ? 1 : 0}`, lk = 'zc' + t;
+      if (L[lk] === key) continue;
+      const prev = L[lk] ? L[lk].split('|').map(Number) : null;
+      L[lk] = key;
+      el._num.textContent = String(cnt);
+      el.classList.remove('has-pen');
+      el.style.setProperty('--p', clamp((100 - cnt) / 100).toFixed(3));
+      el.style.setProperty('--q', '0');
+      el.classList.toggle('is-hold', hold);
+      el.classList.toggle('is-hot', cnt <= 10);
+      if (!prev) continue;
+      if (cnt < prev[0]) {
+        el._num.animate([{ transform: 'translateY(-12%) scale(1.14)' }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.34,1.8,.64,1)' });
+        if (cnt <= 10 && cnt > 0) this._snd('zone_tick', { volume: t === me ? 0.55 : 0.4, pitch: t === me ? 1.12 : 0.9 });
+      }
+      if (hold && !prev[1]) this._restart(el, 'is-took');
+    }
+    // ---- the track: [their goal (in your half) … centre … your goal (in theirs)]
+    const lenMine = z.len[me], lenTheirs = z.len[them], span = lenMine + lenTheirs || 1;
+    const X = (sMe) => clamp((sMe + lenTheirs) / span);
+    const sMe = me === 0 ? z.s : -z.s;
+    if (L.tCps == null) {
+      L.tCps = 1;
+      this.twCps.innerHTML = '';
+      this.twTrack.style.setProperty('--mid', X(0).toFixed(4));
+      for (const c of z.checkpoints) {
+        const d = h('i', { class: 'iw-tw__cp' + (c.team === me ? ' is-mine' : ' is-theirs') });
+        d.style.setProperty('--x', X(c.team === me ? c.d : -c.d).toFixed(4));
+        this.twCps.appendChild(d);
+      }
+    }
+    z.checkpoints.forEach((c, i) => { const d = this.twCps.children[i]; if (d && d._clr !== c.cleared) { d._clr = c.cleared; d.classList.toggle('is-clear', c.cleared); } });
+    this.twTower.style.setProperty('--x', X(sMe).toFixed(4));
+    this.twBest[0].style.setProperty('--x', X(z.best[me]).toFixed(4));
+    this.twBest[1].style.setProperty('--x', X(-z.best[them]).toFixed(4));
+    const side = z.owner === me ? 'mine' : z.owner === them ? 'theirs' : 'neutral';
+    const n = z.owner >= 0 ? z.riders[z.owner] : 0;
+    const nx = z.next && z.next.at && z.owner === z.next.team ? z.next : null;
+    const tkey = `${side}|${n}|${z.contested ? 1 : 0}|${z.moving ? 1 : 0}|${nx ? 1 : 0}`;
+    if (tkey !== L.tKey) {
+      L.tKey = tkey;
+      this.twTower.dataset.side = side;
+      this.tw.dataset.side = side;
+      this.twTower.classList.toggle('is-contested', !!z.contested);
+      this.twTower.classList.toggle('is-moving', !!z.moving);
+      this.twTower.classList.toggle('is-cp', !!nx);
+      [...this.twTower.querySelector('.iw-tw__pips').children].forEach((p, i) => p.classList.toggle('is-on', i < n));
+    }
+    if (nx) this.twTower.style.setProperty('--k', clamp(1 - nx.left / (nx.dur || 1)).toFixed(3));
+    // ---- the status line
+    let st = '';
+    if (nx) st = `CHECKPOINT ${Math.max(0, Math.ceil(nx.left - 1e-6))}`;
+    else if (z.contested) st = 'CONTESTED';
+    else if (z.returning) st = 'ROLLING BACK';
+    else if (z.homing) st = `ROLLING HOME · ${Math.max(0, Math.ceil(TOWER.idleNeutral - z.emptyT))}`;
+    else if (z.owner >= 0 && n === 0 && z.emptyT > 0.3) st = `EMPTY · ${Math.max(0, Math.ceil(TOWER.idleNeutral - z.emptyT))}`;
+    if (st !== L.tSt) {
+      L.tSt = st;
+      this.twStatus.textContent = st;
+      this.tw.classList.toggle('has-status', !!st);
+    }
+    const ot = !!z.overtime;
+    if (ot !== L.tOt) { L.tOt = ot; this.tw.classList.toggle('is-ot', ot); }
+    this._updTowerPtr(z);
+    this._updTowerTimers(z, me);
+    void dt;
+  }
+  // the countdown over each uncleared checkpoint: the seconds left in a ring that sweeps like a clock in quarters —
+  // the team's ink for seconds that score, grey for dummy seconds (a refilled timer's share already scored) — and an
+  // outer ring running down the grace while the tower is off a half-cleared one
+  _updTowerTimers(z, me) {
+    const L = this._L, box = this.twTimers, m = G.match, cps = z.checkpoints || [];
+    const key = cps.length + ':' + (m && (m.id || m.startedAt || 1));
+    if (L.twtKey !== key || !L.twt) {
+      L.twtKey = key;
+      const C = 2 * Math.PI * 19, G2 = 2 * Math.PI * 23;
+      box.replaceChildren(...cps.map(() => {
+        const e = h('div', { class: 'iw-twt' });
+        e.innerHTML = `<svg viewBox="0 0 56 56" aria-hidden="true"><circle class="iw-twt__bg" cx="28" cy="28" r="19"/>` +
+          `<circle class="iw-twt__dum" cx="28" cy="28" r="19" stroke-dasharray="0 ${C}"/><circle class="iw-twt__done" cx="28" cy="28" r="19" stroke-dasharray="0 ${C}"/>` +
+          `<circle class="iw-twt__run" cx="28" cy="28" r="19" stroke-dasharray="0 ${C}"/><circle class="iw-twt__grace" cx="28" cy="28" r="23.5" stroke-dasharray="0 ${G2}"/>` +
+          [0, 1, 2, 3].map((q) => { const a = (q * Math.PI) / 2, x = 28 + Math.sin(a) * 21.5, y = 28 - Math.cos(a) * 21.5, x2 = 28 + Math.sin(a) * 16.5, y2 = 28 - Math.cos(a) * 16.5; return `<line class="iw-twt__tick" x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`; }).join('') +
+          `</svg><b></b>`;
+        return e;
+      }));
+      L.twt = [...box.children].map((e) => ({ e, dum: e.querySelector('.iw-twt__dum'), done: e.querySelector('.iw-twt__done'), run: e.querySelector('.iw-twt__run'), grace: e.querySelector('.iw-twt__grace'), num: e.lastChild, sig: '', n: -1, C, G2, on: false }));
+    }
+    const cam = G.rig?.gameCam || G.camera;
+    const live = !!cam && !!m && (m.state === 'playing' || m.state === 'intro') && z.winner == null && !this.el.classList.contains('is-mapopen');
+    const W = this.el.clientWidth || window.innerWidth, H = this.el.clientHeight || window.innerHeight;
+    // only the checkpoint each team is heading for (its nearest uncleared one) — the rest wait their turn
+    const next = [-1, -1];
+    cps.forEach((c, i) => { if (!c.cleared && (next[c.team] < 0 || c.d < cps[next[c.team]].d)) next[c.team] = i; });
+    cps.forEach((c, i) => {
+      const T = L.twt[i];
+      if (!T) return;
+      let show = live && !c.cleared && !!c.pos && next[c.team] === i;
+      let p = null;
+      if (show) { p = this._project(cam, c.pos[0], c.pos[1] + 6.3, c.pos[2]); show = !!p && p.z < 1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1; }
+      if (show !== T.on) { T.on = show; T.e.classList.toggle('is-on', show); }
+      if (!show) return;
+      const cp = cam.position, dist = Math.hypot(cp.x - c.pos[0], cp.y - c.pos[1], cp.z - c.pos[2]);
+      const k = Math.max(0.55, Math.min(1.15, 24 / Math.max(1, dist)));
+      T.e.style.transform = `translate(${((p.x * 0.5 + 0.5) * W).toFixed(1)}px, ${((0.5 - p.y * 0.5) * H).toFixed(1)}px) scale(${k.toFixed(3)})`;
+      const prog = Math.max(0, Math.min(1, 1 - c.left / (c.dur || 1))), dum = Math.max(0, Math.min(1, c.dummy || 0));
+      const grace = !c.at && c.lost > 0 && prog > 0 ? Math.max(0, 1 - c.lost / (z.grace || 5)) : 0;
+      const active = c.at || prog > 0 || grace > 0;
+      const sig = `${c.team === me ? 'm' : 't'}|${(prog * 400) | 0}|${(dum * 400) | 0}|${(grace * 200) | 0}|${active ? 1 : 0}`;
+      if (sig !== T.sig) {
+        T.sig = sig;
+        T.e.dataset.side = c.team === me ? 'mine' : 'theirs';
+        T.e.classList.toggle('is-active', active);
+        T.e.classList.toggle('is-grace', grace > 0);
+        const C = T.C, sw = Math.min(prog, dum);
+        T.dum.setAttribute('stroke-dasharray', `${(dum * C).toFixed(2)} ${C}`);                     // the dummy share, faint
+        T.done.setAttribute('stroke-dasharray', `${(sw * C).toFixed(2)} ${C}`);                      // dummy seconds re-cleared
+        T.run.setAttribute('stroke-dasharray', prog > dum ? `0 ${(dum * C).toFixed(2)} ${((prog - dum) * C).toFixed(2)} ${C}` : `0 ${C}`);   // seconds that score
+        T.grace.setAttribute('stroke-dasharray', `${(grace * T.G2).toFixed(2)} ${T.G2}`);
+      }
+      const n = Math.max(0, Math.ceil(c.left - 1e-6));
+      if (n !== T.n) { T.n = n; T.num.textContent = String(n); }
+    });
+  }
+  // the pointer: over the tower when it's on screen, pinned to the screen edge (arrow out) when it isn't
+  _updTowerPtr(z) {
+    const L = this._L, el = this.tptr, m = G.match;
+    const show = !z.onTower && z.winner == null && !!m && (m.state === 'playing' || m.state === 'intro') && !this.el.classList.contains('is-mapopen');
+    if (show !== L.tpOn) { L.tpOn = show; el.classList.toggle('is-on', show); }
+    if (!show) return;
+    const cam = G.rig?.gameCam || G.camera;
+    if (!cam) return;
+    const W = this.el.clientWidth || window.innerWidth, H = this.el.clientHeight || window.innerHeight;
+    const p = this._project(cam, z.pos[0], z.top + 3, z.pos[2]);
+    if (!p) return;
+    let x = p.x, y = p.y;
+    const behind = p.z > 1;
+    const inside = !behind && Math.abs(x) < 0.9 && Math.abs(y) < 0.8;
+    if (!inside) {
+      if (behind) { x = -x; y = -y; if (Math.abs(x) < 1e-3 && Math.abs(y) < 1e-3) y = -1; }
+      const k = Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.78, 1e-6);
+      x /= k; y /= k;
+    }
+    const sx = (x * 0.5 + 0.5) * W, sy = (0.5 - y * 0.5) * H;
+    el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+    el.classList.toggle('is-edge', !inside);
+    if (!inside) el.style.setProperty('--rot', `${Math.atan2(-y, x).toFixed(3)}rad`);
+    const side = z.owner === z.viewer ? 'mine' : z.owner >= 0 ? 'theirs' : 'neutral';
+    if (el.dataset.side !== side) el.dataset.side = side;
+    const a = this._local();
+    if (a) {
+      const d = Math.round(Math.hypot(a.pos.x - z.pos[0], a.pos.z - z.pos[2]));
+      if (d !== L.tpD) { L.tpD = d; el.lastChild.textContent = `${d}m`; }
+    }
+  }
+  _twControl({ owner, prev }) {
+    if (!this._twLive()) return;
+    const me = this._zMe(), them = 1 - me, icon = TOWER_ICON;
+    if (owner === me) { this._zCall("WE'VE GOT THE TOWER!", { team: me, icon }); this._snd('zone_ours'); }
+    else if (owner === them) { this._zCall("THEY'VE GOT THE TOWER!", { team: them, kind: 'bad', icon }); this._snd('zone_theirs'); }
+    else if (prev === me) { this._zCall('WE LOST THE TOWER!', { team: them, kind: 'bad', icon }); this._snd('zone_lost'); }
+    else if (prev === them) { this._zCall('THEY LOST THE TOWER!', { team: me, small: true, icon }); this._snd('zone_broken'); }
+    this._restart(this.twTower, 'is-flip');
+  }
+  _twCheckpoint({ team, state }) {
+    if (!this._twLive()) return;
+    const me = this._zMe(), mine = team === me, icon = TOWER_ICON;
+    if (state === 'reach') { this._zCall(mine ? 'CHECKPOINT!' : 'THEY HIT A CHECKPOINT!', { team, small: true, icon, sub: mine ? 'STAY ON TO CLEAR IT' : 'KNOCK THEM OFF!' }); this._snd('tower_checkpoint', { volume: mine ? 0.8 : 0.6 }); }
+    else if (state === 'clear') { this._zCall(mine ? 'CHECKPOINT CLEARED!' : 'THEY CLEARED A CHECKPOINT', { team, kind: mine ? '' : 'bad', icon }); this._snd('tower_clear', { volume: mine ? 0.9 : 0.6, pitch: mine ? 1 : 0.85 }); }
+    else if (state === 'refill') this._zCall(mine ? 'CHECKPOINT RESET' : 'THEIR CHECKPOINT RESET', { team: 1 - team, small: true, icon });
+  }
+  _twContest({ on }) {
+    if (!on || !this._twLive()) return;
+    const now = performance.now();
+    if (now - (this._twContestT || 0) < 5000) return;
+    this._twContestT = now;
+    this._zCall('CONTESTED!', { small: true, icon: TOWER_ICON });
+    this._snd('ui_toggle', { volume: 0.4, pitch: 0.8 });
+  }
+
   // transient zone call-outs (stacked under the kill call-outs; newest on top, at most two)
-  _zCall(text, { team = -1, sub = null, kind = '', small = false } = {}) {
+  _zCall(text, { team = -1, sub = null, kind = '', small = false, icon = null } = {}) {
     const el = h('div', { class: 'iw-zcall' + (small ? ' is-small' : '') + (kind ? ` is-${kind}` : '') + (team < 0 ? ' is-neutral' : '') },
       h('span', { class: 'iw-zcall__ribbon' }),
-      h('span', { class: 'iw-zcall__row' }, h('i', { class: 'iw-zcall__icon', html: ZONE_ICON }), h('span', { class: 'iw-zcall__txt iw-display' }, text)),
+      h('span', { class: 'iw-zcall__row' }, h('i', { class: 'iw-zcall__icon', html: icon || ZONE_ICON }), h('span', { class: 'iw-zcall__txt iw-display' }, text)),
       sub ? h('small', { class: 'iw-zcall__sub' }, sub) : null);
     colorVars(el, 'zk', this._zHex(team));
     const live = [...this.zcalls.children];
@@ -1093,7 +1322,7 @@ export class HUD {
   //   { mode: 'zones', colors, names, counts: [a, b], penalty: [a, b], winner, reason, overtime }
   //   counts are the scores (ZoneControl.state().count / match.result.counts); penalty is what each team still had to
   //   count off, shown apart (a hatched block ahead of the bar) — it isn't part of the score
-  _judgeZones({ colors = ['#ff8a14', '#2f5bff'], names = TEAM_NAMES, counts = [100, 100], penalty = [0, 0], winner = null, reason = null, overtime = false } = {}) {
+  _judgeZones({ colors = ['#ff8a14', '#2f5bff'], names = TEAM_NAMES, counts = [100, 100], penalty = [0, 0], winner = null, reason = null, overtime = false, icon = null } = {}) {
     return new Promise((resolve) => {
       const ca = toHex(colors[0], '#ff8a14'), cb = toHex(colors[1], '#2f5bff');
       const whole = (v, d) => Math.max(0, Math.ceil((Number.isFinite(+v) ? +v : d) - 1e-6));
@@ -1111,13 +1340,13 @@ export class HUD {
         return { el, num, fill, penBar };
       };
       const A = side(0), B = side(1);
-      const sub = ko ? '' : ({ comeback: 'OVERTIME COMEBACK!', retake: 'RETAKEN IN OVERTIME', neutralised: 'HELD ON THROUGH OVERTIME', 'overtime-cap': 'OVERTIME LIMIT' }[reason] || (overtime ? 'OVERTIME' : ''));
+      const sub = ko ? '' : ({ comeback: 'OVERTIME COMEBACK!', retake: 'RETAKEN IN OVERTIME', neutralised: 'HELD ON THROUGH OVERTIME', 'overtime-cap': 'OVERTIME LIMIT', 'sudden-death': 'SUDDEN DEATH' }[reason] || (overtime ? 'OVERTIME' : ''));
       const wText = win < 0 ? "IT'S A TIE!" : `${(names[win] || TEAM_NAMES[win] || '').toUpperCase()} WINS!`;
       const el = h('div', { class: 'iw-jd iw-jz' + (ko ? ' is-ko' : '') },
         h('div', { class: 'iw-jd__bg' }),
         h('div', { class: 'iw-jd__title iw-display' }, h('span', null, 'FINAL COUNT')),
         sub ? h('div', { class: 'iw-jz__sub' }, sub) : null,
-        h('div', { class: 'iw-jz__arena' }, A.el, h('div', { class: 'iw-jz__vs', html: ZONE_ICON }), B.el),
+        h('div', { class: 'iw-jz__arena' }, A.el, h('div', { class: 'iw-jz__vs', html: icon || ZONE_ICON }), B.el),
         ko ? h('div', { class: 'iw-jz__ko' },
           h('div', { class: 'iw-jz__kosplat', html: splatSVG({ seed: 31, cls: 'iw-fwin', r: 60, arms: 12, drops: 8 }) }),
           h('div', { class: 'iw-jz__kotxt iw-display' }, 'KNOCKOUT!')) : null,
@@ -1789,7 +2018,9 @@ export class HUD {
     const bs = G.subs && mm ? G.subs.beaconsFor(me.team).sort((x, y) => x.born - y.born).slice(0, NB - 4) : [];
     bs.forEach((b, k) => {
       mm.toCanvas(b.pos.x, b.pos.z, tc);
-      out[4 + k] = { x: tc.x / mm.w, y: tc.y / mm.h, name: `${b.owner === me ? 'Your' : b.owner.name + "'s"} beacon · ${b.uses}`, ok: true, dev: true, beacon: b };
+      // (its jumps left as lights: ●● a fresh one, ●○ its last jump)
+      const left = '●'.repeat(Math.max(0, b.uses)) + '○'.repeat(Math.max(0, (b.sub?.uses || 2) - b.uses));
+      out[4 + k] = { x: tc.x / mm.w, y: tc.y / mm.h, name: `${b.owner === me ? 'Your' : b.owner.name + "'s"} beacon ${left}`, ok: true, dev: true, beacon: b };
     });
     return out;
   }

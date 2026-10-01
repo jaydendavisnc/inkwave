@@ -1,0 +1,3 @@
+# the listening sheet's renders stay out of the repo (no audio files in git)
+out/*.wav
+out/metrics-only.json

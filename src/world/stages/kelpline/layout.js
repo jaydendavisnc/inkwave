@@ -2,6 +2,7 @@
 //   layout.js    level geometry (this file)        props.js    prop pack + placements (set dressing)
 //   surfaces.js  stage surface materials (texlib)  murals.js   stage decals / signage (mural atlas)
 import { PATTERN, B, R, O } from '../../mapkit.js';
+import { inMode } from '../../variants.js';
 import { SURF } from './surfaces.js';
 
 // Kelpline Terminal — Berth 4 of a working container terminal at shift change. A finger pier runs diagonally out into
@@ -61,6 +62,9 @@ function slotSides(pieces) {
   const mir = (d) => ({ ...d, min: [-d.max[0], d.min[1], -d.max[2]], max: [-d.min[0], d.max[1], -d.min[2]] });
   const solid = (d) => d.kind === 'box' && !d.keep && !d.rail && !d.grate;
   const all = [...pieces.single.filter(solid), ...pieces.half.filter(solid), ...pieces.half.filter(solid).map(mir)];
+  // mode pieces (variants.js): a box only counts the neighbours built with it — in Turf War for a shared box (so the
+  // shared build never changes), in its own mode for a mode-only one
+  const modeOf = (d) => (d.onlyIn ? [].concat(d.onlyIn)[0] : 'turf');
   const sides = [[0, 1], [0, -1], [2, 1], [2, -1]];   // [axis, sign]
   const cover = (p, ax, sg) => {
     const face = sg > 0 ? p.max[ax] : p.min[ax], ox = ax === 0 ? 2 : 0;   // the face's in-plane horizontal axis
@@ -68,7 +72,7 @@ function slotSides(pieces) {
     let hit = 0;
     for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
       const u = p.min[ox] + ((i + 0.5) / n) * (p.max[ox] - p.min[ox]), y = p.min[1] + ((j + 0.5) / m) * (p.max[1] - p.min[1]);
-      if (all.some((q) => q !== p && u > q.min[ox] && u < q.max[ox] && y > q.min[1] && y < q.max[1] &&
+      if (all.some((q) => q !== p && inMode(q, modeOf(p)) && u > q.min[ox] && u < q.max[ox] && y > q.min[1] && y < q.max[1] &&
         (sg > 0 ? q.min[ax] >= face - 0.01 && q.min[ax] < face + SLOT : q.max[ax] <= face + 0.01 && q.max[ax] > face - SLOT))) hit++;
     }
     return hit / (n * m);
@@ -80,8 +84,8 @@ function slotSides(pieces) {
   }
 }
 
-// ISO box: 2.44 wide, 2.6 high (high cube ≈ 2.9, we use 2.6 so tiers stay jump-sized), 6.06 / 12.19 long
-const CW = 2.44, CH = 2.6, LEN = { 20: 6.06, 40: 12.19 };
+// ISO box: 2.44 wide, 2.6 high (high cube ≈ 2.9, we use 2.6 so tiers stay jump-sized), 6.06 / 12.19 long (a 10' 2.99)
+const CW = 2.44, CH = 2.6, LEN = { 10: 2.99, 20: 6.06, 40: 12.19 };
 // a container along z: x0 = its −X side, z0 = its −Z end, tier 0 = on the ground. o.door: 1 = doors at the +Z end
 // (0 = −Z), o.logo: 1–3 = 40' line logo (murals 9/10 on both long sides), o.reefer: machinery end.
 // The tag carries the dressing spec for props.js (container castings, doors, reefer units).
@@ -124,6 +128,91 @@ const quay = (o = {}) => ({ color: K.quay, pattern: SURF.quay, ...o });
 // not inkable (sea: the local normals of the sides that face the harbour)
 const sea = (...n) => ({ noPaint: n });
 const X_ = [1, 0, 0], _X = [-1, 0, 0], Z_ = [0, 0, 1], _Z = [0, 0, -1];
+// Tower Command's own build (variants.js: a tower match builds '<id>.tower'): pieces only in it / left out of it. The
+// track (src/world/tower-data.js) is authored on Bravo's half; its mirror — Bravo's push — runs through this half.
+const towerOnly = (p) => ({ ...p, onlyIn: 'tower' }), notTower = (p) => ({ ...p, notIn: 'tower' });
+// Tower Command's aisle through the reefer rack (the user's "GAP"): the track stays on the ground there. It comes across
+// the truck lane through a cut in row 0 and under a cut in the grate catwalk (local z gap[0] … gap[1], between the
+// rack's middle column pairs; checkpoint 3 stands in it), then turns toward the base down row 1's slot: row 1's boxes are
+// lifted out and row 2's shifted `shift` m toward the apron so the platform fits. Row 1's mid stair lands on a grate
+// landing (local z landing … −13.25) that steps across onto the catwalk.
+export const AISLE = { gap: [-19.24, -16.1], shift: 0.9, landing: -14.65 };
+
+// ---- the Long Stages stretch (the user, 2026-09-30: every stage 50 % longer, spawn → mid 4 s → 6 s of swimming)
+// Each half is DZ m longer along the pier. The cut runs across the berth at the stacks' base end (local z = cut) and
+// round the reefer-side wing (the empties depot out on the free flank belongs to the base): everything beyond it — the
+// base apron, the Terminal Operations building (spawn), the truck gate, the reefer yard, the depot, the back wall, the
+// terminal and the next crane behind it — is drawn below where it always stood and moved DZ toward the base
+// (stretch()); pieces that cross the cut (`grow`: the aprons and the yard slabs) reach DZ further toward the base. The
+// gap is the slice (SLICE below): cross aisle C, Block 4B, the RTG lane with its transfer platform, the lashing store.
+export const STRETCH = { cut: -31.6, d: 23 };
+const DZ = STRETCH.d;
+export const beyondCut = (x, z) => z < STRETCH.cut - 0.01 || (x < -24.05 && z < -21.9);
+function stretch(p) {
+  if (p.kind === 'box') {
+    const cx = (p.min[0] + p.max[0]) / 2, cz = (p.min[2] + p.max[2]) / 2;
+    if (p.grow) { const { grow, ...q } = p; return { ...q, min: [p.min[0], p.min[1], p.min[2] - DZ] }; }
+    return beyondCut(cx, cz) ? { ...p, min: [p.min[0], p.min[1], p.min[2] - DZ], max: [p.max[0], p.max[1], p.max[2] - DZ] } : p;
+  }
+  if (p.kind === 'obox') return beyondCut(p.center[0], p.center[2]) ? { ...p, center: [p.center[0], p.center[1], p.center[2] - DZ] } : p;
+  return beyondCut((p.low[0] + p.high[0]) / 2, (p.low[2] + p.high[2]) / 2) ? { ...p, low: [p.low[0], p.low[1], p.low[2] - DZ], high: [p.high[0], p.high[1], p.high[2] - DZ] } : p;
+}
+// a point / placement of the berth as it stands after the stretch (props.js, the cameras below)
+export const stretchZ = (x, z) => (beyondCut(x, z) ? z - DZ : z);
+
+// ---- the slice (final coordinates; local z from S0 = cut − DZ, the moved base apron's front, to the cut)
+//   • cross aisle C (z −37 … −31.6): a straddle-carrier / truck aisle across the whole pier, apron to apron; the old
+//     stacks' base-end stairs (4A, R2) land in it — the link across the slice
+//   • the RTG lane: the truck lane carried on under RTG 41, a rubber-tyred gantry parked across it (sills + legs in the
+//     painted runways beside the lane = cover; its top is far out of reach). Under its portal the TRANSFER PLATFORM:
+//     a steel deck (2.4 m) in the middle of the lane where boxes are set down to be lashed / coned — the slice's
+//     strategic point: stairs up from the cross aisle (mid side) and from the base end, climbable plated sides, the
+//     lane passing on both sides, a view straight down the lane to the Landing
+//   • Block 4B (+X, rows 1–3 of 4A's grid carried on): a 2.6 m stack plateau with a stair up from each end (a stair
+//     from the forecourt, one from the cross aisle), a 2-high wall along the apron
+//   • the lashing store (−X): a steel shed with a 1.2 m loading dock along the lane side, its yard (the weighbridge
+//     office, cages) facing the cross aisle
+//   • aprons: hatch covers stacked on the ship-side quay (1.2 / 2.4); a barge alongside the reefer-side quay
+export const S0 = STRETCH.cut - DZ;
+export const SLICE = {
+  aisle: [-37.0, STRETCH.cut],
+  tp: { x: 3.0, z: [-45.2, -39.6], y: 2.4, run: 5.8, w: 3.0 },   // transfer platform: half width, deck z, height, stair run + width
+  rtg: { x: 8.09, z: -42.4, sill: 7.2 },                           // RTG 41: sill line |x| (against 4B / the dock), centre z, sill length
+  store: { x: [-16.06, -10.6], z: [S0 + 0.1, -42.6], h: 4.4, dock: -8.54 },
+};
+function slicePieces() {
+  const T = SLICE.tp, S = SLICE.store, a0 = SLICE.aisle[0];
+  return [
+    // ================= the transfer platform: a steel deck in the middle of the RTG lane, a stair up from each end
+    B(-T.x, T.x, 0, T.y, T.z[0], T.z[1], { tag: 'tp-deck', color: K.hatch, pattern: SURF.chequer }),
+    ...stairZ(0, T.z[1] + T.run, T.z[1], 0, T.y, T.w),   // mid side: its foot in cross aisle C
+    ...stairZ(0, T.z[0] - T.run, T.z[0], 0, T.y, T.w),   // base side: toward the forecourt
+
+    // ================= Block 4B (+X): rows 1–3 of 4A's grid carried on (row 0's strip is RTG 41's runway)
+    // row 1: a stair up from the forecourt, a 20', a 10'
+    ...stairZ(A[1] + CW / 2, S0 + 0.1, S0 + 6.4, 0, 2.6, 2.3),
+    box(A[1], S0 + 6.4, 20, 0, K.navy, { door: 0 }), box(A[1], S0 + 12.56, 10, 0, K.orange),
+    // row 2: a stair up from cross aisle C, a 20', a 10' (a pocket at the base end)
+    ...stairZ(A[2] + CW / 2, a0, a0 - 6.3, 0, 2.6, 2.3),
+    box(A[2], a0 - 12.36, 20, 0, K.teal, { door: 0 }), box(A[2], a0 - 15.45, 10, 0, K.grey),
+    // row 3 (apron side): a 2-high 40' wall with a 10' on top halfway along (off limits: cover on the wall's top), a 10'
+    // at the mid end
+    box(A[3], S0 + 0.1, 40, 0, K.blue, { door: 0 }), box(A[3], S0 + 0.1, 40, 1, K.rust, { logo: 1, door: 0 }), box(A[3], S0 + 4.65, 10, 2, K.mustard, { roof: true }),
+    box(A[3], S0 + 12.39, 10, 0, K.mustard),
+
+    // ================= the lashing store (−X): a steel shed (roof off limits), its loading dock along the lane side
+    // with steps down at the mid end
+    // (its dock side and its end on the cross aisle are dressed facades — shutters, canopy, door, windows: not inkable)
+    B(S.x[0], S.x[1], 0, S.h, S.z[0], S.z[1], { tag: 'store', color: '#8fa3a8', pattern: PATTERN.metalpanel, roof: true, noPaint: [X_, Z_] }),
+    B(S.x[1], S.dock, 0, 1.2, S.z[0], S.z[1], { tag: 'store-dock', color: K.kerb, pattern: PATTERN.concrete }),
+    ...stairZ((S.x[1] + S.dock) / 2, S.z[1] + 2.8, S.z[1], 0, 1.2, S.dock - S.x[1]),
+
+    // ================= aprons: hatch covers stacked on the ship-side quay; folded flat racks on the reefer side
+    B(16.9, 20.3, 0, 1.2, -51.2, -44.2, { tag: 'apron-hatch', color: K.hatch, pattern: SURF.chequer }),
+    B(17.5, 19.7, 1.2, 2.4, -49.9, -46.3, { tag: 'apron-hatch', color: K.hatchTop, pattern: SURF.chequer }),
+    B(-22.3, -19.86, 0, 1.3, -40.2, -34.14, { tag: 'flatstack', color: K.green, pattern: PATTERN.container }),
+  ];
+}
 
 // Local-frame pieces (exported for props.js: the container / stair dressing is generated from them)
 export const LOCAL = {
@@ -133,14 +222,15 @@ export const LOCAL = {
     B(-5.4, 5.4, 0, 1.2, -3.0, 3.0, { tag: 'hatch-lower', color: K.hatch, pattern: PATTERN.nonslip, keep: true }),
     B(-2.2, 2.2, 1.2, 2.4, -1.6, 1.6, { tag: 'hatch-upper', color: K.hatchTop, pattern: SURF.chequer, keep: true }),
   ],
-  half: [
-    // ================= ground slabs (each carries its own painted markings — murals.js)
+  half: [...[
+    // ================= ground slabs (each carries its own painted markings — murals.js). The lane and yard slabs and
+    // the aprons cross the cut: they run on through the slice to the moved base apron (grow)
     B(-G.apron, G.apron, -1.2, 0, -47.4, G.zs, { tag: 'base-apron', color: K.base, pattern: SURF.quay, mural: [{ n: [0, 1, 0], id: 7 }] }),
-    B(-G.lane, G.lane, -1.2, 0, G.zs, G.ze, { tag: 'lane', color: K.tarmacLane, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 5 }] }),
-    B(G.lane, G.apron, -1.2, 0, G.zs, G.ze, { tag: 'block-4a', color: K.tarmac, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 4 }] }),
-    B(-G.apron, -G.lane, -1.2, 0, G.zs, G.ze, { tag: 'block-reefer', color: K.tarmac, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 8 }] }),
-    B(G.apron, 24, -1.2, 0, G.notch[1], 0, quay({ tag: 'apron', mural: [{ n: [0, 1, 0], id: 6 }], ...sea(X_, _Z) })),
-    B(-24, -G.apron, -1.2, 0, G.notch[1], 0, quay({ tag: 'apron', mural: [{ n: [0, 1, 0], id: 6 }], ...sea(_X) })),
+    B(-G.lane, G.lane, -1.2, 0, G.zs, G.ze, { tag: 'lane', color: K.tarmacLane, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 5 }], grow: 1 }),
+    B(G.lane, G.apron, -1.2, 0, G.zs, G.ze, { tag: 'block-4a', color: K.tarmac, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 4 }], grow: 1 }),
+    B(-G.apron, -G.lane, -1.2, 0, G.zs, G.ze, { tag: 'block-reefer', color: K.tarmac, pattern: SURF.tarmac, mural: [{ n: [0, 1, 0], id: 8 }], grow: 1 }),
+    B(G.apron, 24, -1.2, 0, G.notch[1], 0, quay({ tag: 'apron', mural: [{ n: [0, 1, 0], id: 6 }], ...sea(X_, _Z), grow: 1 })),
+    B(-24, -G.apron, -1.2, 0, G.notch[1], 0, quay({ tag: 'apron', mural: [{ n: [0, 1, 0], id: 6 }], ...sea(_X), grow: 1 })),
     // pier-head corners: gate side stops at the water slot (x ≤ 20.6), reefer side runs out into the side wing
     B(G.apron, G.notch[0], -1.2, 0, -47.4, G.notch[1], quay({ tag: 'gate-corner', color: K.base, ...sea(X_, _Z) })),
     B(-24, -G.apron, -1.2, 0, -47.4, G.notch[1], quay({ tag: 'reefer-corner', color: K.base, ...sea(_X, _Z) })),
@@ -190,24 +280,37 @@ export const LOCAL = {
 
     // ================= Reefer rack (−X): reefers either side of the plug-in rack; grate catwalk over the alley
     ...stairZ(RF.row0 + CW / 2, G.zs, -25.3, 0, 2.6, 2.3),
-    box(RF.row0, -25.3, 40, 0, K.white, { reefer: 1 }), box(RF.row0, -13.01, 20, 0, K.white, { reefer: 1, door: 0 }),
-    B(RF.alley[0], RF.alley[1], 2.45, 2.6, -25.3, -6.95, { tag: 'reefer-catwalk', color: K.steel, pattern: PATTERN.grate, grate: true }),
-    box(RF.row1, G.zs, 20, 0, K.white, { reefer: 1, door: 0 }), box(RF.row1, -25.44, 40, 0, K.cream, { reefer: 1 }),
+    notTower(box(RF.row0, -25.3, 40, 0, K.white, { reefer: 1 })), box(RF.row0, -13.01, 20, 0, K.white, { reefer: 1, door: 0 }),
+    notTower(B(RF.alley[0], RF.alley[1], 2.45, 2.6, -25.3, -6.95, { tag: 'reefer-catwalk', color: K.steel, pattern: PATTERN.grate, grate: true })),
+    notTower(box(RF.row1, G.zs, 20, 0, K.white, { reefer: 1, door: 0 })), notTower(box(RF.row1, -25.44, 40, 0, K.cream, { reefer: 1 })),
     ...stairZ(RF.row1 + CW / 2, -6.95, -13.25, 0, 2.6, 2.3),
-    box(RF.row2, G.zs, 20, 0, K.white, { reefer: 1, door: 0 }), box(RF.row2, G.zs, 20, 1, K.white, { reefer: 1, door: 0 }), box(RF.row2, -25.44, 40, 0, K.white, { reefer: 1 }),
-    box(RF.row2, -13.15, 20, 0, K.white, { reefer: 1 }), box(RF.row2, -13.15, 20, 1, K.cream, { reefer: 1 }),
+    notTower(box(RF.row2, G.zs, 20, 0, K.white, { reefer: 1, door: 0 })), notTower(box(RF.row2, G.zs, 20, 1, K.white, { reefer: 1, door: 0 })), notTower(box(RF.row2, -25.44, 40, 0, K.white, { reefer: 1 })),
+    notTower(box(RF.row2, -13.15, 20, 0, K.white, { reefer: 1 })), box(RF.row2, -13.15, 20, 1, K.cream, { reefer: 1 }),
+    // Tower Command: the aisle (AISLE above). Row 0's 40' becomes a 20' and a 10' with the aisle between them (doors on
+    // the aisle); the catwalk stops either side of it (the base half at the column pair); row 1 lifted out; row 2's three
+    // boxes along the aisle slid out toward the apron (the mid-end pair stays; its box is rebuilt only so its end — no
+    // longer in a slot — takes ink)
+    towerOnly(box(RF.row0, -25.3, 20, 0, K.white, { reefer: 1 })), towerOnly(box(RF.row0, AISLE.gap[1], 10, 0, K.white, { reefer: 1, door: 0 })),
+    ...[[-25.3, AISLE.gap[0]], [AISLE.gap[1], -6.95]].map(([z0, z1]) => towerOnly(B(RF.alley[0], RF.alley[1], 2.45, 2.6, z0, z1, { tag: 'reefer-catwalk', color: K.steel, pattern: PATTERN.grate, grate: true }))),
+    towerOnly(B(RF.row1, RF.row1 + CW, 2.45, 2.6, AISLE.landing, -13.25, { tag: 'reefer-landing', color: K.steel, pattern: PATTERN.grate, grate: true })),
+    towerOnly(box(RF.row2 - AISLE.shift, G.zs, 20, 0, K.white, { reefer: 1, door: 0 })), towerOnly(box(RF.row2 - AISLE.shift, G.zs, 20, 1, K.white, { reefer: 1, door: 0 })),
+    towerOnly(box(RF.row2 - AISLE.shift, -25.44, 40, 0, K.white, { reefer: 1 })), towerOnly(box(RF.row2, -13.15, 20, 0, K.white, { reefer: 1 })),
 
     // ================= truck lane cover: a 20' on a skeletal chassis behind its tractor (box deck at 1.35: squids slip
     // under the chassis, its top at 3.95 is squid-only), a box the reach stacker just set down
     B(1.6, 1.6 + CW, 1.35, 1.35 + CH, -28.6, -28.6 + LEN[20], { color: K.maroon, pattern: PATTERN.container, tag: 'trailer' }),
-    box(2.6, -15.2, 20, 0, K.orange),
-    // a 20' just landed by the crane beside the hatch covers (its twin flanks the other side of mid)
-    boxX(10.0, -3.4, 20, 0, K.blue, { door: 0 }),
+    // (Tower Command: lifted away — the user's blue X — so the lane opens beside the track along Block 4A's first row)
+    notTower(box(2.6, -15.2, 20, 0, K.orange)),
+    // a 20' just landed by the crane beside the hatch covers (its twin flanks the other side of mid). Tower Command sets
+    // it down on the other side of the portal's centre line: the track runs straight out from the centre along its side
+    // and bends back round it, and the box would otherwise stand in that bend
+    notTower(boxX(10.0, -3.4, 20, 0, K.blue, { door: 0 })),
+    towerOnly(boxX(10.0, 1.3, 20, 0, K.blue, { door: 0 })),
 
     // ================= apron cover: a hatch cover set down behind the crane (left), the straddle carrier's box (right)
     B(17.2, 20.0, 0, 1.2, -27, -20, { tag: 'apron-hatch', color: K.hatch, pattern: SURF.chequer }),
     box(-21.42, -29.0, 20, 0, K.teal, { door: 1 }),
-  ],
+  ].map(stretch), ...slicePieces()],
 };
 
 // ---- world layout
@@ -227,7 +330,7 @@ const bounds = (() => {
   return { minX: -X, maxX: X, minZ: -Z, maxZ: Z };
 })();
 const W = (x, y, z) => { const [a, b] = toWorld(x, z); return [+a.toFixed(3), y, +b.toFixed(3)]; };
-const pad = W(0, 2.6, -43.6);
+const pad = W(0, 2.6, stretchZ(0, -43.6));   // (the ops roof deck, moved out with the base)
 
 const KELPLINE = {
   id: 'kelpline',
@@ -235,15 +338,16 @@ const KELPLINE = {
   bounds,
   spawnPads: [pad, [-pad[0], pad[1], -pad[2]]],
   spawnBarrier: 4.2,
-  // fly in low over the TIDEBANK's bow and the mid bulge, across Block 4A, down onto the ops roof
-  intro: { from: W(40, 22, -8), lookFrom: W(0, 4, -12), toBack: 3.0 },
-  art: { from: W(46, 26, -46), look: W(-4, 4, 4), fov: 55 },   // over the gate-side shoulder: K7's portal, the Landing, CORAL MAXIMA's bow
+  // fly in low over the TIDEBANK's deck cargo, across Block 4B and RTG 41's portal, down onto the ops roof
+  intro: { from: W(38, 22, -28), lookFrom: W(0, 4, -34), toBack: 3.0 },
+  // over the gate-side quay behind Block 4B: RTG 41 over the transfer platform, the lashing store, K7's portal beyond
+  art: { from: W(34, 22, -72), look: W(0, 2, -20), fov: 60 },
   single,
   half,
   decor: {
     lamps: [],
     palms: [],
-    flags: [W(-7.6, 2.6, -46.7), W(7.6, 2.6, -46.7)],
+    flags: [W(-7.6, 2.6, stretchZ(-7.6, -46.7)), W(7.6, 2.6, stretchZ(7.6, -46.7))],
   },
 };
 

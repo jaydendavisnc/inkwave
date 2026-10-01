@@ -527,6 +527,39 @@ export function register(D, H) {
       if (o.antenna) { const [x, z] = o.antenna; B.cyl('metal', K.ironLt, 0.02, 2.2, x, top + 1.1, z, { seg: 5 }); for (const [yy, l] of [[1.8, 0.9], [2.0, 0.7], [2.15, 0.5]]) B.cyl(NS('metal'), K.ironLt, 0.01, l, x, top + yy, z, { rz: HP, seg: 4 }); }
     },
   };
+  // ---- Tower Command: the Caffè's sottoportico (layout.js CAFFE_T): the house's Salita end open underneath — the
+  // portico (lx −w/2 … −um) under a plank ceiling on chestnut beams with stone corbels, the front wall running on to
+  // lx −uf, the café's side door moved onto the solid wall inside, a lantern. Dresses the level pieces; non-colliding.
+  D.terraces_portico = {
+    desc: 'Sottoportico under the Caffè (pos = house centre, the house frame; w, d, um, uf, ceil, wall, top, color): the open end of the house under a timber ceiling — chestnut edge beams on stone corbels, joists, a plank soffit, a plank door and a lantern on the solid wall inside, quoins on the front wall end. Non-colliding.',
+    params: { w: 'house width', d: 'house depth', um: 'lx of the solid wall inside (−um)', uf: 'lx where the front wall ends (−uf)', ceil: 'ceiling height', wall: 'front wall depth' },
+    variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const hw = o.w / 2, hd = o.d / 2, x0 = -hw, x1 = -o.um, xf = -o.uf, c = o.ceil, wc = o.color ?? K.ochre, bw = K.chestnut, st = K.stoneLt;
+      // plank soffit and joists across the portico
+      B.box(NS('wood'), K.woodLt, x1 - x0 - 0.02, 0.03, o.d - 0.02, (x0 + x1) / 2, c - 0.015, 0, { r: 0.005 });
+      for (let x = x0 + 0.45; x < x1 - 0.2; x += 0.62) B.box('wood', bw, 0.1, 0.12, o.d - 0.3, x, c - 0.09, 0, { r: 0.015 });
+      // edge beams along the open sides (the Salita side, the back, the open front corner)
+      B.box('wood', shade(bw, 0.9), 0.2, 0.22, o.d, x0 + 0.1, c - 0.11, 0, { r: 0.02 });
+      B.box('wood', shade(bw, 0.9), x1 - x0, 0.22, 0.2, (x0 + x1) / 2, c - 0.11, -hd + 0.1, { r: 0.02 });
+      B.box('wood', shade(bw, 0.9), xf - x0, 0.22, 0.2, (x0 + xf) / 2, c - 0.11, hd - 0.1, { r: 0.02 });
+      // stone corbels where the beams meet the walls
+      for (const [x, z, ry] of [[x1 - 0.18, -hd + 0.1, 0], [xf - 0.18, hd - 0.1, 0]]) {
+        B.box('paint', st, 0.36, 0.14, 0.24, x, c - 0.29, z, { r: 0.02, ry });
+        B.box('paint', st, 0.24, 0.12, 0.22, x + 0.06, c - 0.42, z, { r: 0.02, ry });
+      }
+      // quoins up the front wall's open end, a plinth along the walls inside
+      for (let k = 0; k < Math.floor((c - 0.3) / 0.58); k++) B.box('paint', st, 0.06, 0.5, k % 2 ? 0.36 : 0.26, xf - 0.03, 0.26 + k * 0.58, hd - (k % 2 ? 0.18 : 0.13), { r: 0.012 });
+      B.box('paint', K.stone, 0.06, 0.3, o.d - o.wall, x1 - 0.03, 0.15, -o.wall / 2, { r: 0.015 });
+      B.box('paint', K.stone, x1 - xf, 0.3, 0.06, (x1 + xf) / 2, 0.15, hd - o.wall - 0.03, { r: 0.015 });
+      // the side door and a lantern on the solid wall inside (it faces −lx)
+      B.push(x1, 0, 0.2, -HP);
+      doorU(B, 0, 0, 0.9, 2.1, { leaf: K.blue });
+      lanternU(B, -1.05, 2.45);
+      B.pop();
+    },
+  };
   // striped canvas awning on a shop (projects 1.1 m), scalloped valance, iron arms
   function awningU(B, x, y, w, o = {}) {
     const cA = o.cA ?? K.blue, cB = o.cB ?? K.cloth, pr = o.proj ?? 1.0, drop = 0.42, n = Math.max(4, Math.round(w / 0.3));
@@ -727,6 +760,158 @@ export function register(D, H) {
       B.blob(3.4, 3.4);
     },
   };
+  // ---- the village LAVATOIO on the Oliveto (the Long Stages slice, layout.js OLIVETO): an open wash-house loggia — six
+  // limewashed pillars under a coppi roof, the long double stone basin down the middle (the wash trough and the rinse
+  // trough, washboard slabs on the rims, water in them), the spring head on the low back wall at the uphill end pouring
+  // into it, the founding tablet on the front architrave, a lantern under the ridge, a basket of washing on the rim.
+  // pos = the loggia's centre on the terrace floor; local +Z = its long axis (the open front, downhill), W across, Dd along.
+  D.terraces_lavatoio = {
+    desc: 'Village lavatoio: open loggia (W x Dd, pos = centre on the floor, local +Z the front): six limewashed pillars, beams, a coppi gable roof (collides, off-limits), the double stone wash basin down the middle (collides 0.85: cover) with water and washboard slabs, the spring head on the low back wall (collides 1.3) pouring into it, the founding tablet, a lantern, washing in a basket and on a line.',
+    params: { W: 'm (6.2)', Dd: 'm (8)', h: 'm pillar height (3.1)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const W = o.W ?? 6.2, Dd = o.Dd ?? 8, Hp = o.h ?? 3.1, wc = K.lime, sc = K.stoneLt, px = W / 2 - 0.26, pz = Dd / 2 - 0.26;
+      // pillars (plinth, shaft, capital) + their colliders; beams round the top; the roof
+      for (const sx of [-1, 1]) for (const z of [-pz, 0, pz]) {
+        B.box('paint', sc, 0.56, 0.3, 0.56, sx * px, 0.15, z, { r: 0.03 });
+        B.box('paint', wc, 0.46, Hp - 0.5, 0.46, sx * px, 0.3 + (Hp - 0.5) / 2, z, { r: 0.03 });
+        B.box('paint', sc, 0.6, 0.2, 0.6, sx * px, Hp - 0.1, z, { r: 0.03 });
+        colBox(B, sx * px, 0, z, 0.56, Hp, 0.56);
+      }
+      for (const sx of [-1, 1]) B.box('paint', wc, 0.5, 0.36, Dd, sx * px, Hp + 0.18, 0, { r: 0.03 });
+      for (const sz of [-1, 1]) B.box('paint', wc, W, 0.36, 0.5, 0, Hp + 0.18, sz * pz, { r: 0.03 });
+      for (let z = -pz + 1.1; z < pz - 0.5; z += 1.1) pbox(B, NS('wood'), K.chestnut, W - 0.6, 0.14, 0.12, 0, Hp + 0.28, z);
+      gableRoof(B, 0, 0, W, Dd, Hp + 0.36, 1.25, { wall: wc, alongX: false, ov: 0.35 });
+      B.col(-W / 2 - 0.4, Hp, -Dd / 2 - 0.4, W / 2 + 0.4, Hp + 1.7, Dd / 2 + 0.4, ROOF);
+      // the founding tablet on the front architrave + the lantern under the ridge
+      B.push(0, Hp + 0.18, Dd / 2 - 0.26 + 0.26);
+      B.box('paint', K.stone, 3.1, 0.3, 0.04, 0, 0, 0.02, { r: 0.01 });
+      letters(B, 'LAVATOIO PUBBLICO 1891', { h: 0.13, x: 0, y: -0.065, z: 0.045, c: K.blueDk, flat: true, wt: 0.2, track: 0.1 });
+      B.pop();
+      B.cyl(NS('metal'), K.iron, 0.012, 0.8, 0, Hp + 0.6, 0, { seg: 4 });
+      lanternU(B, 0, Hp - 0.1, {});
+      // the double basin: outer stone box, two troughs with water, a centre rib, washboard slabs sloping into each
+      const bl = Dd - 2.2, bw = 1.7, bh = 0.85, bz = -0.35;
+      B.box('paint', sc, bw, bh, bl, 0, bh / 2, bz, { r: 0.05 });
+      for (const sx of [-1, 1]) {
+        B.box(NS('gloss'), '#6f9aa2', bw / 2 - 0.22, 0.02, bl - 0.28, sx * (bw / 4), bh - 0.12, bz, { r: 0.01 });
+        B.push(sx * (bw / 2 - 0.16), bh + 0.02, bz, 0, 0, sx * 0.32);
+        B.box('paint', shade(sc, 0.95), 0.36, 0.06, bl - 0.3, 0, 0, 0, { r: 0.02 });
+        for (let k = -bl / 2 + 0.4; k < bl / 2 - 0.3; k += 0.14) pbox(B, NS('paint'), shade(sc, 0.85), 0.34, 0.012, 0.03, 0, 0.032, k);
+        B.pop();
+      }
+      B.box('paint', shade(sc, 0.97), 0.14, 0.12, bl - 0.1, 0, bh + 0.02, bz, { r: 0.02 });
+      colBox(B, 0, 0, bz, bw + 0.1, bh, bl);
+      // the spring head on the low back wall at the uphill (−Z) end, pouring into the basin's end
+      const wz = -Dd / 2 + 0.26;
+      B.box('paint', wc, W - 1.0, 1.3, 0.36, 0, 0.65, wz, { r: 0.03 });
+      B.box('paint', sc, W - 0.9, 0.1, 0.46, 0, 1.33, wz, { r: 0.02 });
+      B.box('paint', sc, 0.9, 0.9, 0.12, 0, 1.0, wz + 0.2, { r: 0.04 });
+      B.sph('paint', shade(sc, 0.95), 0.16, 0, 1.05, wz + 0.28, { ws: 10, hs: 8, sz: 0.6 });
+      B.cyl('metal', K.brass, 0.02, 0.2, 0, 1.0, wz + 0.38, { rx: HP, seg: 8 });
+      B.tube(NS('gloss'), '#bfe1ee', [P3(0, 1.0, wz + 0.47), P3(0, 0.96, wz + 0.58), P3(0, 0.84, wz + 0.64)], (t) => 0.016 + 0.008 * t, { radial: 6 });
+      plaqueU(B, 0, 1.2, 'ACQUA', { h: 0.06, w: 0.44 });
+      colBox(B, 0, 0, wz, W - 1.0, 1.3, 0.36);
+      // washing: a basket on the rim, a scrubbed shirt on the washboard, a line of cloths between the back pillars
+      B.lathe('wood', '#c8a870', [[0, 0], [0.26, 0], [0.3, 0.26], [0.32, 0.3], [0, 0.3]], 0.55, bh + 0.02, bz + bl / 2 - 0.5, { seg: 10 });
+      for (let k = 0; k < 4; k++) B.box(NS('paint'), [K.cloth, '#dfe7ef', '#e9c9c0', K.cloth][k], 0.3, 0.06, 0.24, 0.5 + (k % 2) * 0.1, bh + 0.3 + k * 0.05, bz + bl / 2 - 0.5, { round: true, r: 0.05, ry: k });
+      B.box(NS('paint'), '#dfe7ef', 0.4, 0.02, 0.5, -0.58, bh + 0.1, bz, { rz: 0.3, r: 0.01 });
+      B.tube(NS('paint'), K.rope, [P3(-px, 2.3, -pz + 0.2), P3(0, 2.1, -pz + 0.2), P3(px, 2.3, -pz + 0.2)], 0.01, { radial: 3 });
+      for (const [x, c, hh] of [[-1.6, K.cloth, 0.7], [-0.8, '#e9c9c0', 0.55], [0.1, '#dfe7ef', 0.75], [1.0, K.cloth, 0.6], [1.8, '#f0e2a8', 0.5]]) B.box(NS('paint'), c, 0.55, hh, 0.02, x, 2.15 - hh / 2 + (Math.abs(x) / px) * 0.12, -pz + 0.2, { r: 0.005 });
+    },
+  };
+
+  // ---- the olive terraces' furniture (the Long Stages slice): the old olive mill in the Oliveto, dry-stone wall stubs
+  // (cover among the trees), olive nets rolled on a ladder
+  D.terraces_press = {
+    desc: 'Old stone olive mill (frantoio) out in the grove: a round limestone basin (2.3 m, 0.8 high) with a vertical millstone on a chestnut axle and a pushing beam, olives in the basin, two oil jars. Collides 1.25 m (cover).',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      const R = 1.15, sc = K.stone;
+      B.lathe('paint', sc, [[0, 0], [R, 0], [R + 0.04, 0.08], [R, 0.16], [R - 0.03, 0.7], [R + 0.03, 0.74], [R + 0.03, 0.8], [R - 0.18, 0.8], [R - 0.2, 0.72], [0.2, 0.72], [0.2, 0.8], [0, 0.8]], 0, 0, 0, { seg: 22 });
+      B.cyl(NS('paint'), '#4a4a2c', R - 0.22, 0.02, 0, 0.73, 0, { seg: 18 });
+      dots(B, 0, 0.76, 0, R - 0.35, 0.02, R - 0.35, 30, 0.03, '#3b3a26', 7, NS('gloss'), 0);
+      B.cyl('paint', shade(sc, 0.93), 0.62, 0.34, 0.45, 1.22, 0, { rz: HP, seg: 18 });
+      B.cyl('paint', shade(sc, 0.93), 0.62, 0.34, -0.45, 1.22, 0, { rz: HP, seg: 18 });
+      B.cyl('wood', K.chestnut, 0.09, 1.6, 0, 1.22, 0, { rz: HP, seg: 8 });
+      B.cyl('wood', K.chestnut, 0.13, 1.4, 0, 1.2, 0, { seg: 8 });
+      B.tube('wood', K.chestnut, [P3(0, 1.55, 0), P3(0.6, 1.5, 0.2), P3(2.1, 1.1, 0.6)], 0.07, { radial: 6 });
+      for (const [x, z, h] of [[-1.5, 0.9, 0.7], [-1.9, 0.3, 0.55]]) B.lathe('paint', K.terra, [[0, 0], [0.16, 0], [0.26, h * 0.5], [0.12, h], [0.14, h + 0.05], [0, h + 0.05]], x, 0, z, { seg: 12 });
+      colBox(B, 0, 0, 0, R * 2, 1.25, R * 2);
+      colBox(B, -1.7, 0, 0.6, 0.6, 0.72, 0.9);
+      B.blob(3.2, 3.0);
+    },
+  };
+  D.terraces_drywall = {
+    desc: 'A stub of dry-stone wall along +X (pos = its centre, length L, 0.6 thick, ~1.05 high): rough limestone blocks laid dry, capstones, a caper plant in a gap, an olive net rolled on a ladder against it (net: true). Collides (cover).',
+    params: { length: 'm (2.8)', net: 'bool' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const L = o.length ?? 2.8, Hh = 1.05, seed = Math.round((o.seed ?? 3) * 7);
+      for (let row = 0; row < 4; row++) {
+        let x = -L / 2 + (row % 2) * 0.18;
+        for (let i = 0; x < L / 2 - 0.05; i++) {
+          const w = Math.min(0.35 + 0.3 * hash(seed + row * 11 + i), L / 2 - x), h = 0.22 + 0.06 * hash(seed + i * 3 + row), y = row * 0.25;
+          B.box('paint', mixc(K.stone, K.tufa, hash(seed + i + row * 5)), w - 0.03, h, 0.56 + 0.06 * hash(i + row), x + w / 2, y + h / 2, (hash(i * 7 + row) - 0.5) * 0.05, { r: 0.05 });
+          x += w;
+        }
+      }
+      for (let x = -L / 2 + 0.25; x < L / 2 - 0.1; x += 0.5) B.box('paint', shade(K.stoneLt, 0.97), 0.48, 0.14, 0.64, x, Hh - 0.05, 0, { r: 0.05, ry: (hash(x * 13) - 0.5) * 0.2 });
+      cluster(B, L * 0.2, 0.75, 0.32, 0.25, 0.2, 0.12, 4, 0.12, K.leafDk, K.leaf, seed, 'foliage', { low: true });
+      if (o.net) {
+        seg2(B, [L / 2 - 0.4, 0, 0.45], [L / 2 - 0.6, 2.2, 0.32], 0.05);
+        seg2(B, [L / 2 - 1.0, 0, 0.45], [L / 2 - 1.2, 2.2, 0.32], 0.05);
+        for (let k = 0; k < 6; k++) pbox(B, NS('wood'), K.woodLt, 0.64, 0.04, 0.04, L / 2 - 0.8 - k * 0.02, 0.3 + k * 0.35, 0.44 - k * 0.02);
+        B.cyl('paint', '#3f6b4a', 0.22, 1.3, L / 2 - 1.8, 0.35, 0.5, { rz: HP, seg: 10 });
+      }
+      colBox(B, 0, 0, 0, L, Hh, 0.64);
+      B.blob(L + 0.6, 1.3);
+    },
+  };
+  // a garden urn on a pedestal (villa terraces, the belvedere): moulded limestone pedestal, a big terracotta urn with a
+  // clipped lemon tree (variant 1: an agave). Collides 1.3 (cover).
+  D.terraces_urn = {
+    desc: 'Garden urn on a limestone pedestal (0.75 square, 0.7 high) with a big terracotta urn and a clipped lemon tree (variant 1 agave). Collides 1.3 m (cover).',
+    params: {}, variants: 2, mount: 'ground',
+    build(B, o) {
+      const sc = K.stoneLt, v = (o.variant ?? 0) % 2;
+      B.box('paint', sc, 0.82, 0.12, 0.82, 0, 0.06, 0, { r: 0.02 });
+      B.box('paint', shade(sc, 0.96), 0.66, 0.5, 0.66, 0, 0.37, 0, { r: 0.02 });
+      B.box('paint', sc, 0.8, 0.1, 0.8, 0, 0.67, 0, { r: 0.02 });
+      B.lathe('paint', K.terra, [[0, 0], [0.22, 0], [0.18, 0.08], [0.34, 0.2], [0.42, 0.42], [0.4, 0.56], [0.46, 0.6], [0.46, 0.66], [0, 0.66]], 0, 0.72, 0, { seg: 16 });
+      B.tor(NS('paint'), K.terraDk, 0.41, 0.025, 0, 1.06, 0, { rx: HP, ts: 16, rs: 3 });
+      if (v === 0) {
+        B.cyl('wood', K.bark, 0.04, 0.6, 0, 1.6, 0, { seg: 5 });
+        cluster(B, 0, 2.15, 0, 0.5, 0.45, 0.5, 8, 0.3, K.leafDk, K.leaf, Math.round((o.pos?.[0] ?? 1) * 11), 'foliage', {});
+        dots(B, 0, 2.15, 0, 0.5, 0.42, 0.5, 12, 0.05, K.lemon, Math.round((o.pos?.[2] ?? 1) * 7), NS('paint'), -0.4);
+      } else for (let k = 0; k < 9; k++) { const a = (k / 9) * TAU; B.tube('foliage', '#7f9e9a', [P3(0, 1.3, 0), P3(Math.cos(a) * 0.35, 1.7, Math.sin(a) * 0.35), P3(Math.cos(a) * 0.6, 1.8, Math.sin(a) * 0.6)], (t) => 0.06 * (1 - t) + 0.01, { radial: 4 }); }
+      colBox(B, 0, 0, 0, 0.82, 1.35, 0.82);
+      B.blob(1.2, 1.2);
+    },
+  };
+  // a lemon picker's hand cart: two wheels, shafts down, crates of lemons stacked on the bed. Collides 1.25 (cover).
+  D.terraces_lemoncart = {
+    desc: "Lemon picker's hand cart along +X (shafts toward +X, resting on the ground): two spoked wheels, slatted bed with three crates of lemons stacked, a sack. Collides 1.25 m (cover).",
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.push(0, 0.62, 0, 0, 0, -0.08);
+      B.box('wood', K.woodLt, 1.9, 0.08, 1.1, -0.1, 0, 0, { r: 0.02 });
+      for (const z of [-0.55, 0.55]) B.box('wood', K.wood, 1.9, 0.22, 0.05, -0.1, 0.13, z, { r: 0.01 });
+      for (const z of [-0.35, 0.35]) B.box('wood', K.wood, 1.6, 0.07, 0.07, 1.5, -0.08, z, { r: 0.015 });
+      for (const [x, y, z] of [[-0.55, 0.24, -0.26], [-0.55, 0.24, 0.26], [0.1, 0.24, 0], [-0.55, 0.62, 0]]) {
+        B.box('wood', '#c49b62', 0.6, 0.36, 0.46, x, y, z, { r: 0.02 });
+        dots(B, x, y + 0.2, z, 0.24, 0.02, 0.18, 10, 0.05, K.lemon, Math.round(x * 13 + z * 7 + y * 3), NS('paint'), 0);
+      }
+      B.pop();
+      for (const z of [-0.66, 0.66]) {
+        B.tor('wood', K.woodDk, 0.5, 0.04, -0.2, 0.52, z, { rs: 5, ts: 18 });
+        for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU; B.cyl(NS('wood'), K.woodDk, 0.02, 0.48, -0.2 + Math.cos(a) * 0.24, 0.52 + Math.sin(a) * 0.24, z, { rz: a + HP, seg: 4 }); }
+      }
+      colBox(B, -0.1, 0, 0, 2.0, 1.25, 1.4);
+      B.col(0.9, 0, -0.45, 2.3, 0.6, 0.45);
+      B.blob(3.0, 1.8);
+    },
+  };
+  function seg2(B, a, b, r) { const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], L = Math.hypot(dx, dy, dz); B.push((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2, Math.atan2(-dz, dx), 0, Math.atan2(dy, Math.hypot(dx, dz))); B.box('wood', K.woodLt, L, r, r, 0, 0, 0, { r: r * 0.3 }); B.pop(); }
+
   // wall fountain: limestone aedicule with a shell niche, lion-mask spout, semicircular basin (collides)
   D.terraces_fountain = {
     desc: 'Wall fountain (wall at z = 0, front +Z, 2.2 m wide): limestone back with pilasters, pediment and a shell niche, lion-mask spout pouring into a semicircular basin on a moulded base, majolica name tile, mossy streak. Basin collides (0.8 high).',
@@ -859,10 +1044,16 @@ export function register(D, H) {
   // ---- San Vito: dresses the chapel block (x ±5.5, z ±3, from the sagrato top 1.2 up to 5.8) and the sagrato
   D.terraces_chapel = {
     desc: 'Chapel of San Vito (single, self-symmetric; pos = piazza centre): limewashed block dressing with stone quoins, plinth and cornice, a baroque facade at each end (studded door in a stone frame, rose window, pilasters, curved gable) crowned by a bell gable with two bells, tall arched side windows, a flat roof with coping round an octagonal drum and a majolica-tiled dome with a lantern and cross; the sagrato gets stone edge coping and a lantern post at each corner. Drum/dome, bell gables and lantern posts collide as off-limits tops (roof).',
-    params: {}, variants: 1, mount: 'ground',
-    build(B) {
+    params: { open: 'Tower Command: open at the base (layout.js SAN_VITO_OPEN) — an arcade of three arches on each long side, a starry ceiling inside' },
+    variants: 1, mount: 'ground',
+    build(B, o = {}) {
       B.aoBase = null;
-      const W = 11, Dd = 6, y0 = 1.2, y1 = 5.8, wc = K.white, sc = K.stoneLt;
+      const W = 11, Dd = 6, y0 = 1.2, wc = K.white, sc = K.stoneLt, open = !!o.open;
+      // (open) the arcade along a long side (layout.js SV): [x0, x1] of each opening under the lintel, the solid parts;
+      // the open chapel stands 0.6 m taller (SV.y1; its arcade 4.0 m clear), dS: how much higher its arches spring
+      const SV = TERRAIN.SV, SPR = SV.spring, TH = SV.depth, [pa, pb] = SV.pier, ew = W / 2 - SV.wall;
+      const y1 = open ? SV.y1 : 5.8, dS = SPR - 4.6, NQ = open ? Math.round((y1 - y0 - 0.34) / 0.55) : 8;
+      const BAYS = [[-ew, -pb], [-pa, pa], [pb, ew]], SOLID = [[-W / 2, -ew], [-pb, -pa], [pa, pb], [ew, W / 2]];
       // sagrato: limestone coping on the platform edge + corner lanterns
       for (const side of [0, 1, 2, 3]) onFace(B, 16, 10, side, (L) => {
         B.box('paint', sc, L + 0.06, 0.06, 0.38, 0, y0 + 0.01, -0.16, { r: 0.02 });
@@ -871,14 +1062,40 @@ export function register(D, H) {
       for (const [sx, sz] of [[-1, -1], [1, 1], [-1, 1], [1, -1]]) sub(B, 'terraces_lamppost', sx * 7.55, y0, sz * 4.55, 0, { height: 3.2 });
       // plinth, quoins, cornice on all faces
       for (const side of [0, 1, 2, 3]) onFace(B, W, Dd, side, (L) => {
-        B.box('paint', K.stone, L + 0.1, 0.34, 0.08, 0, y0 + 0.17, 0.04, { r: 0.02 });
-        for (const sx of [-1, 1]) for (let k = 0; k < 8; k++) { const yy = y0 + 0.34 + k * 0.55; B.box('paint', sc, k % 2 ? 0.5 : 0.36, 0.5, 0.06, sx * (L / 2 - (k % 2 ? 0.25 : 0.18)), yy + 0.26, 0.03, { r: 0.015 }); }
+        if (open && side % 2 === 0) for (const [a, b] of SOLID) B.box('paint', K.stone, b - a + (Math.abs(a) > 5 || Math.abs(b) > 5 ? 0.05 : 0.1), 0.34, 0.08, (a + b) / 2, y0 + 0.17, 0.04, { r: 0.02 });
+        else B.box('paint', K.stone, L + 0.1, 0.34, 0.08, 0, y0 + 0.17, 0.04, { r: 0.02 });
+        for (const sx of [-1, 1]) for (let k = 0; k < NQ; k++) { const yy = y0 + 0.34 + k * 0.55; B.box('paint', sc, k % 2 ? 0.5 : 0.36, 0.5, 0.06, sx * (L / 2 - (k % 2 ? 0.25 : 0.18)), yy + 0.26, 0.03, { r: 0.015 }); }
         B.box('paint', sc, L + 0.3, 0.2, 0.3, 0, y1 - 0.1, 0.1, { r: 0.04 });
         B.box(NS('paint'), shade(sc, 0.95), L + 0.18, 0.12, 0.2, 0, y1 - 0.26, 0.06, { r: 0.03 });
         B.box(NS('paint'), shade(wc, 0.93), L + 0.1, 0.35, 0.03, 0, y1 - 0.55, 0.015, { r: 0.01 });
       });
-      // long sides: three tall arched windows between pilaster strips, a lantern at each end
-      for (const side of [0, 2]) onFace(B, W, Dd, side, () => {
+      // long sides: three tall arched windows between pilaster strips, a lantern at each end — or (open) three arches
+      if (open) {
+        for (const side of [0, 2]) onFace(B, W, Dd, side, () => {
+          for (const [a, b] of BAYS) {
+            // a segmental arch under the lintel: its spandrels fill the opening's top corners through the wall, a stone
+            // archivolt and keystone on the face, moulded imposts on the piers
+            const c = b - a, xm = (a + b) / 2, rise = 0.7, crown = SPR - 0.12, ys = crown - rise, Rr = (c * c / 4 + rise * rise) / (2 * rise), cy = crown - Rr;
+            const arc = []; for (let i = 0; i <= 16; i++) { const x = a + (c * i) / 16; arc.push([x, cy + Math.sqrt(Math.max(0, Rr * Rr - (x - xm) * (x - xm)))]); }
+            B.add('paint', tpl('svspan|' + c.toFixed(2), () => extrudeGeo([...arc.map(([x, y]) => [x - xm, y - ys]), [c / 2, SPR - ys], [-c / 2, SPR - ys]], TH, 0.01)), wc, xm, ys, -TH / 2, { ry: HP });
+            B.tube('paint', sc, arc.map(([x, y]) => P3(x, y + 0.04, 0.035)), 0.09, { radial: 6 });
+            B.box('paint', sc, 0.26, 0.36, 0.12, xm, crown + 0.08, 0.05, { r: 0.02 });
+            for (const x of [a, b]) B.box('paint', sc, 0.7, 0.12, TH + 0.06, x + (x === a ? -0.3 : 0.3), ys - 0.06, 0.03 - TH / 2, { r: 0.02 });
+          }
+          for (const x of [-(pa + pb) / 2, (pa + pb) / 2]) B.box('paint', shade(wc, 0.97), 0.34, 2.2 + dS, 0.06, x, y0 + 0.34 + (2.2 + dS) / 2, 0.03, { r: 0.015 });
+          lanternU(B, -(ew + W / 2) / 2, y0 + 2.6 + dS); lanternU(B, (ew + W / 2) / 2, y0 + 2.6 + dS);
+        });
+        // inside: a starry blue ceiling, two lanterns over the side bays, a votive niche on each end wall
+        const iz = Dd / 2 - TH;
+        B.box(NS('paint'), '#2d4a73', ew * 2 - 0.04, 0.03, iz * 2 - 0.04, 0, SPR - 0.015, 0, { r: 0.005 });
+        for (let k = 0; k < 40; k++) B.sph(NS('metal'), K.gold, 0.035, (ew - 0.3) * (2 * hash(k * 5.7 + 2) - 1), SPR - 0.04, (iz - 0.2) * (2 * hash(k * 3.3 + 7) - 1), { ws: 5, hs: 3 });
+        for (const x of [-(ew + pb) / 2, (ew + pb) / 2]) {
+          B.cyl(NS('metal'), K.iron, 0.012, 0.42, x, SPR - 0.21, 0, { seg: 4 });
+          B.box('glow', K.lamp, 0.22, 0.3, 0.22, x, SPR - 0.6, 0, { r: 0.02, glow: 1.4 });
+          B.lathe('metal', K.iron, [[0, 0.15], [0.17, 0.15], [0.15, 0.19], [0.04, 0.3], [0, 0.32]], x, SPR - 0.6, 0, { seg: 4, ry: P / 4 });
+        }
+        for (const s of [-1, 1]) { B.push(s * ew, 0, 0, s > 0 ? -HP : HP); nicheU(B, 0, y0 + 1.0); B.pop(); }
+      } else for (const side of [0, 2]) onFace(B, W, Dd, side, () => {
         for (const x of [-3.2, 0, 3.2]) {
           archU(B, x, y0 + 1.25, 0.9, 2.3, { inside: '#39424a', frame: sc });
           pbox(B, NS('gloss'), '#56687a', 0.8, 1.6, 0.01, x, y0 + 2.05, 0.012);
@@ -904,7 +1121,7 @@ export function register(D, H) {
         B.add('paint', pedGeo(), sc, 0, y0 + dh + 0.12, 0.14, { ry: HP, sz: 2.3, sy: 0.34, sx: 0.28 });
         B.box('paint', sc, 2.4, 0.1, 0.3, 0, y0 + dh + 0.08, 0.14, { r: 0.02 });
         // rose window with a majolica ring
-        const ry = y0 + 3.55;
+        const ry = open ? y1 - 1.05 : y0 + 3.55;   // (under the frieze)
         B.tor('paint', sc, 0.55, 0.09, 0, ry, 0.05, { ts: 24, rs: 6 });
         B.add(NS('gloss'), cylGeo(0.5, 0.5, 0.02, 20), '#4c6174', 0, ry, 0.02, { rx: HP });
         for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU; pbox(B, NS('paint'), sc, 0.05, 0.5, 0.03, Math.cos(a) * 0.24, ry + Math.sin(a) * 0.24, 0.04, { rz: a + HP }); }
@@ -1037,7 +1254,7 @@ export function register(D, H) {
   const INC = Math.atan2(4.8, 28), INCL = Math.hypot(4.8, 28);
   D.terraces_track = {
     desc: 'Funicular track dressing on the incline ramp (pos = low end on the track centre-line, local +Z uphill along the ramp, rise/run given): timber sleepers every 0.7 m, two steel rails (gauge 1.0), cable rollers on the centre-line with the haul cable, a buffer stop at the bottom, a low kerb along the stair side. Flush (≤ 9 cm): walk over.',
-    params: { run: 'm (28)', rise: 'm (4.8)' }, variants: 1, mount: 'ground',
+    params: { run: 'm (28)', rise: 'm (4.8)', buffer: 'bool (true): the buffer stop at the low end' }, variants: 1, mount: 'ground',
     build(B, o) {
       const run = o.run ?? 28, rise = o.rise ?? 4.8, a = Math.atan2(rise, run), L = Math.hypot(rise, run);
       B.push(0, 0, 0, 0, -a);
@@ -1050,7 +1267,8 @@ export function register(D, H) {
       for (let z = 1.5; z < L - 0.5; z += 3.2) { B.cyl(NS('metal'), '#8c8c86', 0.07, 0.24, 0, 0.09, z, { rz: HP, seg: 8 }); pbox(B, NS('metal'), K.iron, 0.3, 0.05, 0.1, 0, 0.03, z); }
       B.cyl(NS('metal'), '#3c3b38', 0.015, L - 1.0, 0, 0.17, L / 2, { rx: HP, seg: 4 });
       B.pop();
-      // buffer stop at the low end: two sprung buffers on a steel frame
+      // buffer stop at the low end: two sprung buffers on a steel frame (not where the track runs on down another reach)
+      if (o.buffer === false) return;
       B.box('metal', K.iron, 1.6, 0.5, 0.2, 0, 0.35, -0.25, { r: 0.02 });
       for (const sx of [-0.45, 0.45]) { B.cyl('metal', '#c6a23c', 0.1, 0.25, sx, 0.45, -0.05, { rx: HP, seg: 10 }); B.cyl('metal', K.iron, 0.14, 0.04, sx, 0.45, 0.08, { rx: HP, seg: 12 }); }
       for (let k = 0; k < 5; k++) pbox(B, NS('paint'), k % 2 ? K.iron : '#d8b24a', 0.3, 0.12, 0.01, -0.6 + k * 0.3, 0.48, -0.14, { rz: 0.6 });
@@ -1767,13 +1985,29 @@ const seaBalustrades = RIM0.map((r) => ({ type: 'terraces_balustrade', pos: [r.s
 // sea cliffs under the edge (outside the arena)
 const seaCliffs = RIM0.map((r, i) => ({ type: 'terraces_cliff', pos: [r.start[0], 0, r.start[1]], rotY: rotX(r.ux, r.uz), length: r.len, top0: 0, top1: 0, seed: 3 + i }));
 // ivy / caper cascades on every third terrace wall (levels 1–3)
-const ivy = [1, 2, 3].flatMap((L) => rimsOf(L).filter((r, i) => (i + L) % 3 === 0 && r.len > 0.8).map((r, i) => ({ type: 'terraces_ivy', pos: [r.start[0] + r.ux * 0.1, r.y, r.start[1] + r.uz * 0.1], rotY: rotX(r.ux, r.uz), width: r.len - 0.2, drop: 0.95, variant: (i + L) % 2 })));
+// (Tower Command: not on the terrace wall the tower climbs from the Salita onto the Largo — the rail runs up its face)
+const IVY_NOT_TOWER = [[-13.56, -20.6]];
+const ivy = [1, 2, 3].flatMap((L) => rimsOf(L).filter((r, i) => (i + L) % 3 === 0 && r.len > 0.8).map((r, i) => ({ type: 'terraces_ivy', pos: [r.start[0] + r.ux * 0.1, r.y, r.start[1] + r.uz * 0.1], rotY: rotX(r.ux, r.uz), width: r.len - 0.2, drop: 0.95, variant: (i + L) % 2 })))
+  .map((it) => (IVY_NOT_TOWER.some(([x, z]) => Math.hypot(it.pos[0] - x, it.pos[2] - z) < 0.05) ? { ...it, notIn: 'tower' } : it));
 
 // ---- handrails both sides of every stair (rail colliders follow the slope)
 const STAIRS = HALF.filter((d) => d.kind === 'ramp' && /scalinata|vicolo|passo|stair|salita|gradoni/.test(d.tag) && !/incline/.test(d.tag));
+// Tower Command: rails the track runs into — the Salita's first flight (the track climbs it) loses both, four others
+// lose the metre nearest the track ({ tag, low: the stair's low height, s: which side, bottom / top: metres cut })
+const TOWER_RAILS = [
+  { tag: 'salita-flight', low: 0, s: 1, drop: true }, { tag: 'salita-flight', low: 0, s: -1, drop: true },
+  { tag: 'scalinata', low: 2.4, s: -1, bottom: 0.6 }, { tag: 'vicolo-flight-2', low: 1.2, s: 1, top: 0.7 },
+  { tag: 'orto-stair', low: 1.2, s: -1, top: 0.7 }, { tag: 'limonaia-stair', low: 2.4, s: 1, bottom: 0.5 },
+];
 const stairRails = STAIRS.flatMap((d) => {
   const dx = d.high[0] - d.low[0], dz = d.high[2] - d.low[2], run = Math.hypot(dx, dz), ux = dx / run, uz = dz / run, sx = -uz, sz = ux, off = d.width / 2 + 0.07;
-  return [1, -1].map((s) => ({ type: 'terraces_rail', pos: [d.low[0] + sx * off * s, d.low[1], d.low[2] + sz * off * s], rotY: rotX(ux, uz), length: run, rise: d.high[1] - d.low[1] }));
+  const rise = d.high[1] - d.low[1], modes = { ...(d.onlyIn ? { onlyIn: d.onlyIn } : {}), ...(d.notIn ? { notIn: d.notIn } : {}) };   // (a stair's rails go where it goes)
+  return [1, -1].flatMap((s) => {
+    const rail = (a, b) => ({ type: 'terraces_rail', pos: a ? [d.low[0] + sx * off * s + ux * a, d.low[1] + (rise * a) / run, d.low[2] + sz * off * s + uz * a] : [d.low[0] + sx * off * s, d.low[1], d.low[2] + sz * off * s], rotY: rotX(ux, uz), length: run - a - b, rise: a || b ? (rise * (run - a - b)) / run : rise });
+    const cut = TOWER_RAILS.find((c) => c.tag === d.tag && Math.abs(c.low - d.low[1]) < 0.01 && c.s === s);
+    if (!cut) return [{ ...rail(0, 0), ...modes }];
+    return [{ ...rail(0, 0), notIn: 'tower' }, ...(cut.drop ? [] : [{ ...rail(cut.bottom ?? 0, cut.top ?? 0), onlyIn: 'tower' }])];
+  });
 });
 
 // ---- the houses (dressing for the turned blocks in layout.js)
@@ -1781,9 +2015,25 @@ const H = TR.HOUSES, U = TR.UPPERS;
 const dress = (h, faces, o = {}) => ({ type: 'terraces_house', pos: [h.cx, 0, h.cz], rotY: rad(h.rot), w: h.w, d: h.d, top: h.top, faces, color: h.color, ...o });
 
 // ---- the funicular along the incline (local +Z uphill)
-const I = TR.INC, iN = TR.incN, iD = TR.incDir, up = rotZ(-iD[0], -iD[1]), down = rotZ(iD[0], iD[1]);
-const trackFoot = [I.foot[0] - iN[0] * 0.9, I.foot[2] - iN[1] * 0.9];
+// (two straight reaches since the stretch — layout.js INC_SEG: the upper one from the station down to the kink, the
+// first drawing's lower one on to the foot)
+const I = TR.INC, SEG = TR.INC_SEG, lowSeg = SEG[1], down = rotZ(lowSeg.dir[0], lowSeg.dir[1]);
 const incAt = (t, off) => TR.incP(t, off);
+const funicular = [
+  // the track, reach by reach (the upper one runs on through the kink: no buffer stop there)
+  ...SEG.map((g, i) => ({ type: 'terraces_track', pos: [g.b[0] - g.n[0] * 0.9, g.b[1], g.b[2] - g.n[1] * 0.9], rotY: rotZ(-g.dir[0], -g.dir[1]), run: g.L, rise: g.a[1] - g.b[1], buffer: i === SEG.length - 1 })),
+  // the car stopped on the upper reach, in the olive terraces (cover beside the Salita)
+  (() => { const g = SEG[0], u = 0.56, x = g.a[0] + (g.b[0] - g.a[0]) * u - g.n[0] * 0.9, z = g.a[2] + (g.b[2] - g.a[2]) * u - g.n[1] * 0.9; return { type: 'terraces_funicar', pos: [x, g.a[1] + (g.b[1] - g.a[1]) * u, z], rotY: rotZ(-g.dir[0], -g.dir[1]), run: g.L, rise: g.a[1] - g.b[1] }; })(),
+  // the lower station canopy past the foot, the upper one on the spawn terrace (moved out with it)
+  (() => { const p = incAt(1.03, -0.9); return { type: 'terraces_station', pos: [p[0], 0, p[1]], rotY: down, w: 1.9, d: 2.0, h: 2.8, sign: 'FUNICOLARE' }; })(),
+  { type: 'terraces_station', pos: [-24.6, 4.8, -43.2 - TR.DS], rotY: 0, w: 3.4, d: 3.6, h: 2.8, sign: 'STAZIONE', clock: false },
+  // the incline's own cliff down the west side, reach by reach
+  ...SEG.map((g, i) => ({ type: 'terraces_cliff', pos: [g.a[0] - g.n[0] * 2.2, 0, g.a[2] - g.n[1] * 2.2], rotY: rotX(g.dir[0], g.dir[1]), length: g.L, top0: g.a[1], top1: g.b[1], seed: 2 + i })),
+];
+// the Long Stages stretch: the hill's own pieces (the villa and the back of the base, the spawn terrace's furniture, the
+// Limonaia) are drawn below where they first stood and moved out with the hilltop (layout.js DS)
+const outB = (p) => ({ ...p, pos: [p.pos[0], p.pos[1], p.pos[2] - TR.DS] });
+const atB = (type, x, z, o = {}) => at(type, x, z - TR.DS, o);
 
 // ---- the piazza ring: compass angle ψ round the centre, radius r
 const po = (psi, r) => { const u = TR.uO(psi); return [u[0] * r, u[1] * r]; };
@@ -1794,25 +2044,25 @@ const onH = (type, r, phi, o = {}) => { const [x, z] = ph(r, phi); return at(typ
 
 export const PLACEMENTS = [
   // ================= San Vito (single, self-symmetric)
-  { type: 'terraces_chapel', pos: [0, 0, 0], mirror: false, notIn: 'zones' },
+  { type: 'terraces_chapel', pos: [0, 0, 0], mirror: false, notIn: ['zones', 'tower'] },
+  // Tower Command: San Vito open at the base (layout.js SAN_VITO_OPEN) — the tower starts under the dome
+  { type: 'terraces_chapel', pos: [0, 0, 0], mirror: false, onlyIn: 'tower', open: true },
   // Zone Control: the chapel opened up into the tempietto on the deeper sagrato (layout.js SINGLE)
   { type: 'terraces_tempietto', pos: [0, 0, 0], mirror: false, onlyIn: 'zones' },
 
   // ================= the back of the base: Villa Limoni (spawn backdrop), upper funicular station, garden wall, hill
-  { type: 'terraces_villa', pos: [-12, 0, -45.4], rotY: 0, w: 15.2 },
-  { type: 'terraces_upstation', pos: [-23.2, 0, -45.4], rotY: 0, w: 7.2, trackX: -25.18 + 23.2 },
-  { type: 'terraces_gardenwall', pos: [2.05, 0, -45.4], rotY: 0, w: 12.9, gateX: -1.5, floor: 2.4, top: 5.0 },
-  { type: 'terraces_hillside', pos: [-10, 0, -46], rotY: 0 },
-  // sea edge: balustrades on the coping, cliffs below; the incline's own cliff down the west side
+  ...[
+    { type: 'terraces_villa', pos: [-12, 0, -45.4], rotY: 0, w: 15.2 },
+    { type: 'terraces_upstation', pos: [-23.2, 0, -45.4], rotY: 0, w: 7.2, trackX: SEG[0].a[0] - SEG[0].n[0] * 0.9 + 23.2 },
+    { type: 'terraces_gardenwall', pos: [2.05, 0, -45.4], rotY: 0, w: 12.9, gateX: -1.5, floor: 2.4, top: 5.0 },
+    { type: 'terraces_hillside', pos: [-10, 0, -46], rotY: 0 },
+    { type: 'terraces_balustrade', pos: [-26.6, 4.8, -45.2], rotY: -HP_, length: 3.9 },
+  ].map(outB),
+  // sea edge: balustrades on the coping, cliffs below
   ...seaBalustrades, ...seaCliffs,
-  { type: 'terraces_cliff', pos: [I.top[0] - iN[0] * 2.2, 0, I.top[2] - iN[1] * 2.2], rotY: rotX(iD[0], iD[1]), length: iD[2], top0: 4.8, top1: 0, seed: 2 },
-  { type: 'terraces_balustrade', pos: [-26.6, 4.8, -45.2], rotY: -HP_, length: 3.9 },
 
-  // ================= the funicular: track, car stopped halfway, lower + upper station canopies
-  { type: 'terraces_track', pos: [trackFoot[0], 0, trackFoot[1]], rotY: up, run: iD[2], rise: 4.8 },
-  (() => { const p = incAt(0.5, -0.9); return { type: 'terraces_funicar', pos: [p[0], 2.4, p[1]], rotY: up }; })(),
-  (() => { const p = incAt(1.03, -0.9); return { type: 'terraces_station', pos: [p[0], 0, p[1]], rotY: down, w: 1.9, d: 2.0, h: 2.8, sign: 'FUNICOLARE' }; })(),
-  { type: 'terraces_station', pos: [-24.6, 4.8, -43.2], rotY: 0, w: 3.4, d: 3.6, h: 2.8, sign: 'STAZIONE', clock: false },
+  // ================= the funicular: two reaches of track, the car stopped on the upper one, the station canopies
+  ...funicular,
 
   // ================= the crescent round the piazza
   dress(H.caffe, {
@@ -1821,20 +2071,36 @@ export const PLACEMENTS = [
     1: [{ t: 'win', x: 0.6, y: 2.0, w: 0.7, h: 0.95, shut: BLUE, box: true }, { t: 'plaque', x: -1.2, y: 2.4, text: 'VICOLO DEL SOLE', h: 0.065 }, { t: 'lamp', x: -0.3, y: 3.0 }],
     3: [{ t: 'door', x: 0.9, y: 0, w: 0.9, h: 2.05, leaf: BLUE }, { t: 'win', x: -1.0, y: 1.2, w: 0.7, h: 1.0, shut: BLUE }, { t: 'bougain', x: 1.9, y: 0, y1: 3.4, w: 1.1 }, { t: 'pipe', x: -2.05, y0: 0, y1: 3.6 }],
     2: [{ t: 'plaque', x: 1.4, y: 3.05, text: '12', h: 0.1, w: 0.26 }],
-  }, { roof: 'flat', cope: [0, 1, 3] }),
-  { type: 'terraces_house', pos: [U.caffe.cx, 0, U.caffe.cz], rotY: rad(U.caffe.rot), w: U.caffe.w, d: U.caffe.d, top: U.caffe.top, color: U.caffe.color, roof: 'gable', rise: 1.0, alongX: true,
-    faces: { 0: [{ t: 'sign', x: 0, y: 4.9, text: 'CAFFÈ', h: 0.4, c: '#35506e', lit: 0.9, litC: '#ffe3a6' }, { t: 'win', x: 1.3, y: 3.95, w: 0.7, h: 0.85, shut: BLUE, lit: 0.9 }, { t: 'door', x: -1.2, y: 3.6, w: 0.85, h: 2.0, leaf: BLUE }],
-      3: [{ t: 'gnomon', x: 0, y: 5.75 }], 1: [{ t: 'win', x: 0, y: 4.3, w: 0.7, h: 1.1, shut: BLUE, lit: 0.9 }] } },
-  onP('terraces_pergola', H.caffe.psi + 6, 15.0, { y: 3.6, rotY: rad(H.caffe.rot), w: 2.6, d: 2.2, h: 2.2, variant: 0, pillars: [[-1.1, 0.9], [1.1, 0.9]] }),
-  onP('terraces_cafe', H.caffe.psi + 5, 14.9, { y: 3.6, variant: 0, seed: 0.9 }),
-  dress(H.ceramiche, {
-    0: [{ t: 'shop', x: -1.2, y: 0, w: 2.1, h: 2.0, frame: '#2f5f8a', goods: 'ceramics', lit: 0.8 }, { t: 'door', x: 1.25, y: 0, w: 1.0, h: 2.05, arch: false, leaf: '#2f5f8a', frame: '#e9e2d3' },
-      { t: 'sign', x: 0, y: 2.55, text: 'CERAMICHE', h: 0.2, c: '#2f5f8a', flat: true }, { t: 'plates', x: 0, y: 3.05, n: 5 }, { t: 'lamp', x: 2.1, y: 2.35 }],
-    3: [{ t: 'plates', x: 0.2, y: 1.8, n: 4 }, { t: 'niche', x: -1.3, y: 1.9 }],
-    1: [{ t: 'win', x: -0.2, y: 1.9, w: 0.7, h: 0.95, shut: '#2f5f8a', grille: true }, { t: 'plaque', x: 1.2, y: 2.9, text: 'PASSO', h: 0.07 }],
-  }, { roof: 'flat', cope: [0, 1, 3] }),
-  { type: 'terraces_house', pos: [U.ceramiche.cx, 0, U.ceramiche.cz], rotY: rad(U.ceramiche.rot), w: U.ceramiche.w, d: U.ceramiche.d, top: U.ceramiche.top, color: U.ceramiche.color, roof: 'gable', rise: 0.9,
-    faces: { 0: [{ t: 'balc', x: 0, y: 3.9, w: 1.5, shut: '#2f5f8a', lit: 0.9, trail: 0.4 }], 1: [{ t: 'win', x: 0, y: 4.2, w: 0.7, h: 1.0, shut: '#2f5f8a' }] }, chimneys: [[-1.0, -0.4]] },
+  }, { roof: 'flat', cope: [0, 1, 3], notIn: 'tower' }),
+  // Tower Command: the Caffè over its sottoportico (layout.js CAFFE_T) — the shop front a little narrower (the front
+  // wall stops 0.95 m short of the corner), the Salita side open underneath, its door moved in under the portico; the
+  // whole house TR.PORTICO.lift taller (the portico 4.3 m clear), its upper storey and roof terrace with it
+  dress({ ...H.caffe, top: H.caffe.top + TR.PORTICO.lift }, {
+    0: [{ t: 'shop', x: -1.15, y: 0, w: 1.95, h: 2.1, frame: '#3f5f7f', lit: 1.0 }, { t: 'door', x: 1.5, y: 0, w: 1.0, h: 2.2, arch: false, leaf: '#3f5f7f', frame: '#e9e2d3' },
+      { t: 'awning', x: -1.15, y: 2.5, w: 2.05, cA: BLUE }, { t: 'lamp', x: 2.45, y: 2.4 }, { t: 'win', x: 1.5, y: 2.55, w: 0.7, h: 0.8, shut: BLUE }],
+    1: [{ t: 'win', x: 0.6, y: 2.0, w: 0.7, h: 0.95, shut: BLUE, box: true }, { t: 'plaque', x: -1.2, y: 2.4, text: 'VICOLO DEL SOLE', h: 0.065 }, { t: 'lamp', x: -0.3, y: 3.0 }],
+    2: [{ t: 'plaque', x: 1.4, y: 3.42 + TR.PORTICO.lift, text: '12', h: 0.1, w: 0.26 }],
+  }, { roof: 'flat', cope: [0, 1, 3], onlyIn: 'tower' }),
+  { type: 'terraces_portico', pos: [H.caffe.cx, 0, H.caffe.cz], rotY: rad(H.caffe.rot), w: H.caffe.w, d: H.caffe.d, um: TR.PORTICO.um, uf: TR.PORTICO.uf, ceil: TR.PORTICO.ceil, wall: TR.PORTICO.wall, top: H.caffe.top + TR.PORTICO.lift, color: H.caffe.color, onlyIn: 'tower' },
+  // the upper storey and the roof terrace's pergola + tables: as built, and (Tower Command) TR.PORTICO.lift higher
+  ...[[0, { notIn: 'tower' }], [TR.PORTICO.lift, { onlyIn: 'tower' }]].flatMap(([dy, m]) => [
+    { type: 'terraces_house', pos: [U.caffe.cx, dy, U.caffe.cz], rotY: rad(U.caffe.rot), w: U.caffe.w, d: U.caffe.d, top: U.caffe.top, color: U.caffe.color, roof: 'gable', rise: 1.0, alongX: true,
+      faces: { 0: [{ t: 'sign', x: 0, y: 4.9, text: 'CAFFÈ', h: 0.4, c: '#35506e', lit: 0.9, litC: '#ffe3a6' }, { t: 'win', x: 1.3, y: 3.95, w: 0.7, h: 0.85, shut: BLUE, lit: 0.9 }, { t: 'door', x: -1.2, y: 3.6, w: 0.85, h: 2.0, leaf: BLUE }],
+        3: [{ t: 'gnomon', x: 0, y: 5.75 }], 1: [{ t: 'win', x: 0, y: 4.3, w: 0.7, h: 1.1, shut: BLUE, lit: 0.9 }] }, ...m },
+    onP('terraces_pergola', H.caffe.psi + 6, 15.0, { y: 3.6 + dy, rotY: rad(H.caffe.rot), w: 2.6, d: 2.2, h: 2.2, variant: 0, pillars: [[-1.1, 0.9], [1.1, 0.9]], ...m }),
+    onP('terraces_cafe', H.caffe.psi + 5, 14.9, { y: 3.6 + dy, variant: 0, seed: 0.9, ...m }),
+  ]),
+  // (the Ceramiche and its upper storey twice: as built, and Tower Command's 0.7 m shallower one, layout.js CERAMICHE_T)
+  ...[[H.ceramiche, U.ceramiche, { notIn: 'tower' }], [TR.CERAMICHE_T, TR.UPPER_CERAMICHE_T, { onlyIn: 'tower' }]].flatMap(([h, u, m]) => [
+    dress(h, {
+      0: [{ t: 'shop', x: -1.2, y: 0, w: 2.1, h: 2.0, frame: '#2f5f8a', goods: 'ceramics', lit: 0.8 }, { t: 'door', x: 1.25, y: 0, w: 1.0, h: 2.05, arch: false, leaf: '#2f5f8a', frame: '#e9e2d3' },
+        { t: 'sign', x: 0, y: 2.55, text: 'CERAMICHE', h: 0.2, c: '#2f5f8a', flat: true }, { t: 'plates', x: 0, y: 3.05, n: 5 }, { t: 'lamp', x: 2.1, y: 2.35 }],
+      3: [{ t: 'plates', x: 0.2, y: 1.8, n: 4 }, { t: 'niche', x: -1.3, y: 1.9 }],
+      1: [{ t: 'win', x: -0.2, y: 1.9, w: 0.7, h: 0.95, shut: '#2f5f8a', grille: true }, { t: 'plaque', x: 1.2, y: 2.9, text: 'PASSO', h: 0.07 }],
+    }, { roof: 'flat', cope: [0, 1, 3], ...m }),
+    { type: 'terraces_house', pos: [u.cx, 0, u.cz], rotY: rad(u.rot), w: u.w, d: u.d, top: u.top, color: u.color, roof: 'gable', rise: 0.9,
+      faces: { 0: [{ t: 'balc', x: 0, y: 3.9, w: 1.5, shut: '#2f5f8a', lit: 0.9, trail: 0.4 }], 1: [{ t: 'win', x: 0, y: 4.2, w: 0.7, h: 1.0, shut: '#2f5f8a' }] }, chimneys: [[-1.0, -0.4]], ...m },
+  ]),
   onP('terraces_potplant', H.ceramiche.psi - 7, 14.2, { y: 3.6, variant: 0 }),
   dress(H.mare, {
     0: [{ t: 'shop', x: -0.8, y: 0, w: 1.9, h: 1.95, frame: GREEN, goods: 'lemons', lit: 0.8 }, { t: 'door', x: 1.3, y: 0, w: 0.9, h: 2.0, leaf: GREEN }, { t: 'sign', x: -0.8, y: 2.05, text: 'LIMONCELLO', h: 0.13, c: '#c69a1e', flat: true }],
@@ -1845,17 +2111,21 @@ export const PLACEMENTS = [
     faces: { 1: [{ t: 'win', x: 0, y: 3.6, w: 0.7, h: 1.0, shut: BLUE, lit: 0.9 }], 2: [{ t: 'win', x: 0, y: 3.5, w: 0.6, h: 0.9, shut: BLUE }] } },
   onP('terraces_crates', H.mare.psi - 4, 14.9, { y: 2.6, rotY: rad(H.mare.rot) + 0.1, variant: 1 }),
   // ================= the Largo (H2): wall fountain on the shoulder wall, the olive, lamps, a lemon tree, the cat
-  (() => { const [x, z] = ph(11.2, -27.2), n = [0.99, 0.14]; return { type: 'terraces_fountain', pos: [x, 2.4, z], rotY: rotZ(n[0], n[1]) }; })(),
-  onH('terraces_olive', 16.2, 17, { seed: 5 }),
+  // (the stretch: the Largo's west shoulder it stood against is gone — the fountain now stands against the Oliveto's
+  // north-east wall, over the lane from the groves into the Largo)
+  (() => { const L = TR.LAVATOIO, ax = [Math.sin(L.rot), Math.cos(L.rot)], n = [ax[1], -ax[0]], p = [-9.05 + n[0] * 4.3, -27.6 + n[1] * 4.3]; return { type: 'terraces_fountain', pos: [p[0], 2.4, p[1]], rotY: rotZ(n[0], n[1]) }; })(),
+  onH('terraces_olive', 16.2, 17, { seed: 5, notIn: 'tower' }),
+  (() => { const [x, z] = ph(16.2, 17); return at('terraces_olive', x, z - 1.3, { seed: 5, onlyIn: 'tower' }); })(),   // (Tower Command: clear of the track behind the Ceramiche)
   onH('terraces_lamppost', 12.8, -20),
   onH('terraces_lamppost', 12.8, 20),
-  onH('terraces_potplant', 9.6, -24, { variant: 0 }),
-  onH('terraces_cat', 15.0, -9, { rotY: 1.2, variant: 0, color: '#d18a4a' }),
+  at('terraces_potplant', -3.6, -28.6, { variant: 0 }),
+  onH('terraces_cat', 15.0, -9, { rotY: 1.2, variant: 0, color: '#d18a4a', notIn: 'tower' }),
+  at('terraces_cat', -13.0, -23.3, { rotY: 1.2, variant: 0, color: '#d18a4a', onlyIn: 'tower' }),   // (Tower Command: off the track, by the fountain)
 
   // ================= the street behind the crescent (H2): laundry on poles, doorstep pots
-  onP('terraces_laundry', -34, 20.4, { y: 5.2, rotY: rotX(TR.uO(-34)[1] * -1, TR.uO(-34)[0]), length: 3.6, posts: 2.8, variant: 0 }),
+  onP('terraces_laundry', -34, 20.4, { y: 5.2, rotY: rotX(TR.uO(-34)[1] * -1, TR.uO(-34)[0]), length: 3.6, posts: 2.8, variant: 0, notIn: 'tower' }),   // (its far post stands on the track)
   onP('terraces_laundry', 12, 20.3, { y: 5.2, rotY: rotX(-TR.uO(12)[1], TR.uO(12)[0]), length: 3.4, posts: 2.8, variant: 1 }),
-  onP('terraces_pots', -26, 20.9, { count: 4 }),
+  onP('terraces_pots', -26, 20.9, { count: 4, notIn: 'tower' }),   // (on the track in Tower Command)
   onP('terraces_pots', 24, 20.8, { count: 5, variant: 1 }),
 
   // ================= the piazza (Alpha side of the ring)
@@ -1866,31 +2136,87 @@ export const PLACEMENTS = [
   onP('terraces_truck', 57, 12.8, { rotY: rotX(TR.uO(57)[1] * -1, TR.uO(57)[0]) + 0.15, color: '#7fa6b8' }),
   onP('terraces_well', -68, 13.0),
   onP('terraces_cat', -68.4, 13.55, { y: 0.92, rotY: 1.2, variant: 2, color: '#3a3634' }),
-  onP('stringlights', -52, 12.9, { rotY: rotX(-TR.uO(-46)[1], TR.uO(-46)[0]), length: 6.5, height: 2.7, posts: true, sag: 0.3 }),
+  onP('stringlights', -52, 12.9, { rotY: rotX(-TR.uO(-46)[1], TR.uO(-46)[0]), length: 6.5, height: 2.7, posts: true, sag: 0.3, notIn: 'tower' }),
+  // (Tower Command: its first post stood on the track across the piazza — 2.5 m shorter, from the café's side)
+  (() => { const [x, z] = po(-52, 12.9), d = [-TR.uO(-46)[1], TR.uO(-46)[0]]; return at('stringlights', x + d[0] * 2.5, z + d[1] * 2.5, { rotY: rotX(d[0], d[1]), length: 4.0, height: 2.7, posts: true, sag: 0.25, onlyIn: 'tower' }); })(),
 
   // ================= the east bastion (and, mirrored, the west one): the telescope on the prow, an agave in the corner
   { type: 'terraces_telescope', pos: [TR.BELV[0] + 2.3, -0.1, TR.BELV[1]], rotY: HP_ },
   { type: 'terraces_potplant', pos: [15.0, 0, -5.55], variant: 3 },
 
-  // ================= the east lane: Limonaia (H3 lobe) under its pergola, Orto (H2), the headland lookout (H0)
-  at('terraces_pergola', -1.6, -33.8, { rotY: 0.55, w: 8.0, d: 6.0, h: 2.5, variant: 0, cover: 0.6 }),
-  at('terraces_potplant', -4.2, -35.6, { variant: 0 }),
-  at('terraces_potplant', 1.6, -35.9, { variant: 1 }),
-  at('terraces_shed', 6.2, -29.4, { rotY: -0.7 }),
+  // ================= the east lane: Limonaia (H3 lobe, moved out with the hill) under its pergola, Orto (H2), the
+  // headland lookout (H0)
+  atB('terraces_pergola', -1.6, -33.8, { rotY: 0.55, w: 8.0, d: 6.0, h: 2.5, variant: 0, cover: 0.6 }),
+  atB('terraces_potplant', -4.2, -35.6, { variant: 0 }),
+  atB('terraces_potplant', 1.6, -35.9, { variant: 1 }),
+  at('terraces_shed', 6.2, -29.4, { rotY: -0.7, notIn: 'tower' }),   // (shed, washing line and the cat on the shed: on the track in Tower Command)
   at('terraces_bed', 1.2, -25.0, { rotY: 0.6, length: 2.4 }),
-  at('terraces_laundry', 3.5, -30.8, { y: 5.2, rotY: 0.95, length: 3.4, posts: 2.8, variant: 1 }),
-  at('terraces_cat', 7.4, -28.2, { y: 3.2, rotY: 0.4, variant: 0, color: '#8d8a86' }),
+  at('terraces_laundry', 3.5, -30.8, { y: 5.2, rotY: 0.95, length: 3.4, posts: 2.8, variant: 1, notIn: 'tower' }),
+  at('terraces_cat', 7.4, -28.2, { y: 3.2, rotY: 0.4, variant: 0, color: '#8d8a86', notIn: 'tower' }),
   at('terraces_lamppost', 9.2, -25.3),
   at('terraces_telescope', 16.8, -20.8, { rotY: rotZ(0.8, -0.6) }),
   at('terraces_lamppost', 12.6, -12.4),
 
-  // ================= the west: the Salita, the forecourt, the villa terrace
-  at('terraces_lamppost', -15.4, -35.6),
-  at('terraces_potplant', -20.4, -44.6, { y: 4.8, variant: 3 }),
-  at('terraces_bench', -16.4, -44.95, { y: 4.8, rotY: 0, length: 2 }),
-  at('terraces_cat', -21.6, -44.7, { y: 4.8, rotY: 0.4, variant: 2, color: '#e8e2d8' }),
-  at('terraces_pots', -7.6, -45.0, { y: 4.8, count: 4 }),
-  at('terraces_lamppost', -16.8, -40.2, { y: 4.8 }),
+  // ================= the spawn terrace (Villa Limoni's belvedere, H4): urns and benches for cover round the pad (the
+  // Long Stages stretch: the terrace was bare, its middle the stage's largest open floor)
+  at('terraces_urn', -19.2, -57.4, { variant: 0 }),
+  at('terraces_urn', -4.8, -57.4, { variant: 0 }),
+  at('terraces_bench', -16.4, -52.4, { rotY: 0.45, length: 2 }),
+  at('terraces_bench', -7.6, -52.4, { rotY: -0.45, length: 2 }),
+  // ================= the west: the Salita, the forecourt, the villa terrace (moved out with the hill)
+  atB('terraces_lamppost', -15.4, -35.6),
+  atB('terraces_potplant', -20.4, -44.6, { y: 4.8, variant: 3 }),
+  atB('terraces_bench', -16.4, -44.95, { y: 4.8, rotY: 0, length: 2 }),
+  atB('terraces_cat', -21.6, -44.7, { y: 4.8, rotY: 0.4, variant: 2, color: '#e8e2d8' }),
+  atB('terraces_pots', -7.6, -45.0, { y: 4.8, count: 4 }),
+  atB('terraces_lamppost', -16.8, -40.2, { y: 4.8 }),
+
+  // ================= THE OLIVE TERRACES (the Long Stages slice between the hill and the Largo; layout.js OLIVETO / LEMON)
+  // the Oliveto (H3): the lavatoio on its north end over the lower Scalinata, the old olive mill, olives in their stone
+  // rings, a dry-stone wall stub with an olive net on a ladder
+  { type: 'terraces_lavatoio', pos: [TR.LAVATOIO.cx, TR.H3, TR.LAVATOIO.cz], rotY: TR.LAVATOIO.rot, W: TR.LAVATOIO.W, Dd: TR.LAVATOIO.Dd },
+  at('terraces_press', -12.3, -40.4, { rotY: 0.4 }),
+  at('terraces_olive', -13.6, -44.4, { seed: 2 }),
+  at('terraces_olive', -8.4, -37.2, { seed: 9 }),
+  at('terraces_olive', -13.4, -35.2, { seed: 13 }),
+  at('terraces_drywall', -7.6, -42.4, { rotY: HP_ + 0.06, length: 2.6, net: true, seed: 2 }),
+  at('terraces_lamppost', -12.6, -46.2),
+  // the lemon groves (H2) round the lemon house: its dressing, the vine pergola over the lemon pots north of it, crates,
+  // the well in the lane by the Oliveto, lemon trees along the groves' east wall (the tower's lane kept clear, x 5–7.6)
+  { type: 'terraces_house', pos: [TR.LEMON.cx, 0, TR.LEMON.cz], rotY: 0, w: TR.LEMON.w, d: TR.LEMON.d, top: TR.LEMON.top, color: '#f0e2a8', roof: 'gable', rise: 1.4,
+    faces: { 0: [{ t: 'arch', x: 0, y: 2.4, w: 2.2, h: 3.4 }, { t: 'sign', x: 0, y: 5.9, text: 'LIMONAIA', h: 0.28, c: '#4f7e62', flat: true }],
+      1: [{ t: 'win', x: -2.6, y: 3.0, w: 1.2, h: 2.4, shut: GREEN }, { t: 'win', x: 0, y: 3.0, w: 1.2, h: 2.4, shut: GREEN, lit: 0.7 }, { t: 'win', x: 2.6, y: 3.0, w: 1.2, h: 2.4, shut: GREEN }],
+      2: [{ t: 'door', x: 1.2, y: 2.4, w: 1.0, h: 2.2, leaf: GREEN }, { t: 'win', x: -1.2, y: 3.4, w: 0.8, h: 1.0, shut: GREEN }, { t: 'lamp', x: 0.1, y: 4.6 }],
+      3: [{ t: 'win', x: -2.4, y: 3.2, w: 0.9, h: 1.3, shut: GREEN }, { t: 'win', x: 1.4, y: 3.2, w: 0.9, h: 1.3, shut: GREEN }, { t: 'bougain', x: -0.6, y: 2.4, y1: 5.8, w: 1.4 }, { t: 'pipe', x: 2.65, y0: 2.4, y1: 6.5 }] } },
+  at('terraces_pergola', 0.5, -33.7, { rotY: 0, w: 5.6, d: 4.0, h: 2.6, variant: 0 }),
+  at('terraces_potplant', -0.8, -33.4, { variant: 0 }),
+  at('terraces_potplant', 1.9, -34.1, { variant: 0 }),
+  at('terraces_crates', 3.5, -36.3, { rotY: 0.2, variant: 1 }),
+  at('terraces_crates', -4.3, -43.6, { rotY: -0.3, variant: 0 }),
+  at('terraces_well', -4.3, -34.6),
+  at('terraces_lamppost', -5.2, -47.2),
+  ...[[9.0, -53.0], [9.2, -47.0], [9.3, -41.0], [9.0, -35.2]].map(([x, z], i) => at('terraces_potplant', x, z, { variant: i === 2 ? 4 : 0 })),
+  // (turf + zones: lemon carts down the groves' street; in Tower Command that street is the tower's lane)
+  at('terraces_lemoncart', 6.3, -44.2, { rotY: HP_ + 0.1, notIn: 'tower' }),
+  at('terraces_lemoncart', 6.2, -34.8, { rotY: -HP_ + 0.15, notIn: 'tower' }),
+  // the lemon walk on the terrace below the groves (H1): a pergola of lemon pots, urns at its ends
+  at('terraces_pergola', 11.8, -44.0, { rotY: 0, w: 2.8, d: 9.0, h: 2.5, variant: 0 }),
+  ...[[11.8, -47.2], [11.8, -41.0]].map(([x, z]) => at('terraces_potplant', x, z, { variant: 0 })),
+  at('terraces_urn', 11.9, -52.6, { variant: 0 }),
+  at('terraces_urn', 11.7, -34.2, { variant: 1 }),
+  // the promenade under the groves (H0) and the washerwomen's lookout on its little bastion
+  at('terraces_bench', 14.6, -46.0, { rotY: HP_, length: 2 }),
+  at('terraces_bench', 14.6, -38.0, { rotY: HP_, length: 2 }),
+  at('terraces_lamppost', 14.2, -52.6),
+  at('terraces_lamppost', 14.2, -31.6),
+  { type: 'terraces_telescope', pos: [18.0, 0, -43.0], rotY: HP_ },
+  at('terraces_kiosk', 15.0, -49.4, { rotY: -HP_ }),
+  at('terraces_urn', 18.5, -41.4, { variant: 1 }),
+
+  at('terraces_potplant', 18.6, -45.4, { variant: 3 }),
+  // the Salita's middle reach beside the funicular: a lamp, pots on a doorstep
+  at('terraces_lamppost', -16.0, -37.0),
+  at('terraces_pots', -16.4, -48.8, { count: 3 }),
 
   // ================= stairs: handrails; terrace walls: ivy
   ...stairRails, ...ivy,

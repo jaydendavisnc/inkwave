@@ -437,10 +437,11 @@ function release(runner, w, k) {
 // ---------------------------------------------------------------------------------------------- bots
 // fight: a full draw at range, ring 1 up close; the flat fan leans toward a second foe beside the target; a target
 // above / below (ledge, stairs), or now and then at mid range, gets a jump shot with the upright fan
-function groupYaw(a, t, fanRad) {
+function groupYaw(brain, a, t, fanRad) {
   let best = null, bd = 3.5;
   for (const e of G.actors) {
-    if (e === t || e.team === a.team || !e.alive) continue;
+    // (a second foe the bot can see — bots.js / botSight.js — never one behind a wall)
+    if (e === brain.target || e.team === a.team || !e.alive || !brain.sight?.sees(e)) continue;
     const d = Math.hypot(e.pos.x - t.pos.x, e.pos.z - t.pos.z);
     if (d < bd) { bd = d; best = e; }
   }
@@ -470,7 +471,7 @@ const bot = {
       if (a.vel.y > 1.5) return true;                                                     // rising: loose near the top
       return false;
     }
-    if (a.grounded) k.botYaw = groupYaw(a, target, bowShot(wr.charge).fan * DEG);
+    if (a.grounded) k.botYaw = groupYaw(brain, a, target, bowShot(wr.charge).fan * DEG);
     return false;
   },
   paint(brain, ctx) {

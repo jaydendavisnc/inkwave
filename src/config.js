@@ -20,7 +20,7 @@ export const TEAM_NAMES = ['Alpha', 'Bravo'];
 // ---- Player physics / feel (meters, seconds) ----
 export const PLAYER = {
   hp: 100,
-  specialChargeRate: 0.8,   // special meter points per m² of turf inked (0.8 = charges 20% slower); special ink never charges it
+  specialChargeRate: 0.4,   // special meter points per m² of turf inked (halved again 2026-09-28: 0.8 → 0.4); special ink never charges it
   radius: 0.38,
   height: 1.45,          // kid form standing height (feet -> top of head)
   squidHeight: 0.55,
@@ -329,33 +329,45 @@ export const SUBS = {
     inkCost: 40, throwSpeed: 16, radius: 2.1, directDamage: 60, splashDamage: 35, paintRadius: 1.8,
   },
   seeker: {
-    id: 'seeker', name: 'Skitter Bomb', kind: 'seeker', blurb: 'Scuttles after the nearest foe, laying a swimmable ink trail, and bursts when it reaches them. It turns wide: sidestep it late.',
+    id: 'seeker', name: 'Skitter Bomb', kind: 'seeker', blurb: 'Scuttles after the nearest foe, laying a swimmable ink trail, and bursts a moment after it reaches them. It turns wide: sidestep it late.',
     // turnRate: rad/s (1.75 ≈ 100°/s: a ~3.6 m turning circle at full speed; was 5); commitDist: dashes straight (no
     // steering) once this close and lined up; creep: how much it slows turning onto a slow / standing target.
     // speed 6.3 (was 7): only just faster than a run (6), so a foe who sidesteps and keeps running gets away instead
     // of being run down from behind; one who stands, walks or shoots while strafing is still caught
+    // delay: on reaching its foe (or running out) it stops and winds up for this long — swelling, blinking, its own
+    // alarm — before it bursts, so a foe who reacts can still get out of the blast (2026-10-01: "a short delay explosion
+    // for skitter / waddle / mine bombs"; the same windup on all three)
     inkCost: 65, throwSpeed: 9, speed: 6.3, seekRange: 15, life: 4.5, trailRadius: 0.6, triggerDist: 1.2, turnRate: 1.75, commitDist: 2.5, creep: 0.6,
-    radius: 2.8, damageMax: 180, damageMin: 35, paintRadius: 2.4,
+    delay: 0.45, radius: 2.8, damageMax: 180, damageMin: 35, paintRadius: 2.4,
   },
   scan: {
     id: 'scan', name: 'Echo Orb', kind: 'scan', blurb: 'Bursts into a sensing cloud. Foes it touches are tracked for your whole team. No damage.',
     inkCost: 55, throwSpeed: 14, fuse: 1.1, radius: 4.2, cloudTime: 0.9, trackTime: 8,
   },
   curtain: {
-    id: 'curtain', name: 'Drip Curtain', kind: 'curtain', blurb: 'Drops a wall of falling ink that stops enemy players and shots. It fades over time, faster when shot.',
+    id: 'curtain', name: 'Drip Curtain', kind: 'curtain', blurb: 'Drops a wall of falling ink that stops enemy players and shots. It fades over time, faster when shot: the meter on top shows what\'s left.',
+    // (its ink — hp — shows on a meter along its top, both sides, for everyone: src/game/subs.js _curtainMeter)
     inkCost: 55, throwSpeed: 9, width: 3.4, height: 2.7, hp: 170, decay: 19, shotMul: 0.5,
   },
   sprinkler: {
     id: 'sprinkler', name: 'Twirl Sprinkler', kind: 'sprinkler', blurb: 'Sticks to any surface and sprays ink around it in pulses, until it is shot or you get splatted.',
-    inkCost: 60, throwSpeed: 12, hp: 70, pulse: 0.3, drops: 6, sprayRadius: 3.2, sprayFade: 12, dropDamage: 8,
+    // sprayRadius: the outer edge of its ink (m). 2026-10-01 ("make the sprinkler work further away"): 3.2 → 5.5 — each
+    // drop's launch speed is solved for a landing distance picked evenly over the disc's AREA (0.5 m … sprayRadius − 0.75,
+    // the drop's own splat reaching the rest), so the far ring gets as much ink per m² as the middle instead of
+    // thinning out; drops 6 → 7 a pulse (+17 % ink a second for ~3× the area); dropDamage unchanged
+    inkCost: 60, throwSpeed: 12, hp: 70, pulse: 0.3, drops: 7, sprayRadius: 5.5, sprayFade: 12, dropDamage: 8,
   },
   mine: {
-    id: 'mine', name: 'Lurk Mine', kind: 'mine', blurb: 'Planted at your feet and hidden in your ink. Foes who come close are hit and tracked. Two at a time.',
-    inkCost: 55, placed: true, max: 2, triggerRadius: 2.1, armTime: 0.9, delay: 0.35, radius: 2.6, damage: 45, trackTime: 8, paintRadius: 2.0,
+    id: 'mine', name: 'Lurk Mine', kind: 'mine', blurb: 'Planted at your feet, invisible to the other team. Foes who come close set it off: it pops up and blows a moment later, hitting and tracking them. Two at a time.',
+    // 2026-10-01: invisible to the enemy at all times (no mesh, shadow or map mark), a translucent ghost to its own team;
+    // tripped, it pops up for everyone and blows `delay` s later (0.35 → 0.45: the same windup as the Skitter / Waddle)
+    inkCost: 55, placed: true, max: 2, triggerRadius: 2.1, armTime: 0.9, delay: 0.45, radius: 2.6, damage: 45, trackTime: 8, paintRadius: 2.0,
   },
   beacon: {
-    id: 'beacon', name: 'Hop Beacon', kind: 'beacon', blurb: 'A super-jump point for your team. Place up to three; each takes two jumps.',
-    inkCost: 70, placed: true, max: 3, uses: 2, hp: 50,
+    id: 'beacon', name: 'Hop Beacon', kind: 'beacon', blurb: 'A super-jump point for your team. Place up to three; each takes two jumps (its lights show what\'s left).',
+    // sonar: a ring pulse every `sonar` s from it (ground + air; its team's to see — the other team's faint); the jumps
+    // left show as lights over it (and on the jump map's pins)
+    inkCost: 70, placed: true, max: 3, uses: 2, hp: 50, sonar: 1.75,
   },
   mist: {
     id: 'mist', name: 'Murk Bomb', kind: 'mist', blurb: 'Releases a poison mist that slows foes and drains their ink. A direct hit keeps them poisoned until the mist fades.',
@@ -373,10 +385,11 @@ export const SUBS = {
     trailEvery: 0.38, trailRadius: 0.3,                       // thin ink trail sprayed while it travels
   },
   waddle: {
-    id: 'waddle', name: 'Waddle Bomb', kind: 'waddle', blurb: 'Waddles after foes it senses near where it lands, noisily. Blows up where it lands if nobody is near.',
+    id: 'waddle', name: 'Waddle Bomb', kind: 'waddle', blurb: 'Waddles after foes it senses near where it lands, noisily, and bursts a moment after it reaches one. Blows up where it lands if nobody is near.',
     inkCost: 65, throwSpeed: 12,
     senseRadius: 7.5, senseUp: 4, fuse: 1.1,                  // sensing circle on landing; nobody inside → blows after fuse
     speed: 4.0, turnRate: 8, life: 9, maxTravel: 26, triggerDist: 1.2,   // tracks its foe (nav paths, hops up steps)
+    delay: 0.45,                                              // reached its foe (or gave up): stops and winds up this long
     radius: 3.0, damageMax: 180, damageMin: 35, paintRadius: 2.6, hp: 30,  // Splat Bomb blast; shoot-able (30 hp)
   },
   torpedo: {
@@ -406,6 +419,18 @@ export const SUBS = {
 };
 export const SUB_ORDER = ['bomb', 'sticky', 'burst', 'shaker', 'seeker', 'waddle', 'torpedo', 'tracer', 'boomerang', 'scan', 'curtain', 'sprinkler', 'mine', 'beacon', 'mist'];
 export const SUB = SUBS; // older code reads SUB.bomb
+// ---- [sub-view] Sub weapons' world models: how many times bigger than before each one is drawn in the world — what
+// flies, lands, sticks, rolls, walks, hovers or stands there (the Bomb Barrage's Splat Bombs too). VISUAL ONLY: every
+// blast / trigger / sense / spray radius, collider, physics radius, damage, speed and timing is in SUBS above and doesn't
+// read this; where gameplay used to read a model's size (a sprinkler's / beacon's shot hitbox) it keeps the old number
+// (src/game/subs.js hitH). The prop held in the hand while aiming and the HUD icons stay the built size. Read when an
+// object is made, so a change here shows on the next throw. Tuned by eye (visibility pass 2026-09-30), then capped at
+// 2x after play (the user: "make the subs 2x not 3x, theyre too big"). The check: tools/botlab/tests/sub-scale.js.
+export const SUB_VIEW_SCALE = {
+  bomb: 2, sticky: 2, burst: 2, seeker: 2, scan: 2, curtain: 1.5, sprinkler: 2, mine: 2, beacon: 2, mist: 2,
+  shaker: 2, waddle: 2, torpedo: 2, tracer: 2, boomerang: 1.5,
+};
+export const subViewScale = (kind) => SUB_VIEW_SCALE[kind] ?? 1;
 
 // Specials. Every special refills your ink tank when it starts. `duration` = how long a timed special lasts (s).
 export const SPECIALS = {
@@ -500,6 +525,35 @@ export const ZONES = {
   sampleHz: 5,                // coverage checks per second
 };
 
+// Tower Command (src/game/tower.js): a tower on a mirrored path through the stage — ride it into enemy territory
+export const TOWER = {
+  duration: 300,              // 5 minutes (+ overtime)
+  count: 100,                 // the score a team counts down from (100 at the centre, 0 at the enemy goal)
+  // the 100 points: riding it the whole track to the enemy goal is trackPoints, clearing the checkpoints on the way the
+  // rest (split evenly between them). pointRate = points / s with one rider — it sets the tower's speed on each stage
+  // (track length ÷ (trackPoints / pointRate) m/s) and each checkpoint's time ((checkpointPoints / n) / pointRate s)
+  pointRate: 1,
+  trackPoints: 60,
+  checkpointPoints: 40,
+  // a stage with two checkpoints (the user, 2026-09-30): 10 s each, the track (twice as long as it was, detour loops)
+  // worth the other 80 — the tower runs 1.5× as fast and still takes 100 s from the centre to the goal with one rider
+  twoCheckpoints: { trackPoints: 80, checkpointPoints: 20 },
+  mult: [0, 1, 1.2, 1.33, 1.43],   // speed (and checkpoint clearing) × by riders of the pushing team: 1 / 2 / 3 / 4
+  returnK: 0.6,               // a neutral tower rolls back toward the centre at this × the one-rider speed
+  idleNeutral: 5,             // s with nobody on it before the team in control loses it (it goes neutral, then back)
+  checkpoints: [0.42, 0.72],  // where a stage without its own sits them: fractions of each side's path to the goal
+  checkpointGrace: 5,         // s a half-cleared checkpoint waits for its team to bring the tower back before it refills
+  gaugeHeld: 4.5,             // special points / s for every player on the team in control (riding or not)
+  gaugeNeutral: 2.25,         // … for the team behind while the tower is neutral
+  overtimeMax: 300,           // overtime cap (s) — the team ahead wins
+  platformR: 1.25,            // m: the platform's half-width (a square collider; the mesh is round)
+  platformH: 1.6,             // m: its top above the path — higher than a jump (1.41 m): ink its walls and swim up
+  riderUp: 1.3,               // m above the top that still counts as riding (a hop on it)
+  pillarW: 0.44, pillarH: 1.8, // m: the thin pillar in the platform's middle — cover for its riders (never inked; slide off its top)
+  pillarCap: 0.24,            // m: the pyramid cap on it
+  snapHz: 10,                 // online: host snapshots a second
+};
+
 export const DIFFICULTY = {
   // aimOmega / aimTurn: bot aim spring stiffness (rad/s) and turn-rate cap (rad/s) — see bots.js
   easy:   { id: 'easy',   name: 'Chill',  reaction: 0.55, aimError: 0.11, fireDiscipline: 0.55, awareness: 16, aimOmega: 9,  aimTurn: 7 },
@@ -520,6 +574,12 @@ export const MAPS = [
   { id: 'crossmarket', name: 'Crossroads Market', blurb: 'Narrow shop streets and an iron gallery close in on the glass Market Hall, where the No. 3 tram waits under the clock.', theme: 'golden', times: { day: 'golden', dusk: 'sunset' } },
   { id: 'lockgate', name: 'Lockgate Canals', blurb: 'Drained locks through a brick warehouse district: the canal splits the map, so hold the bridge and the gates.', theme: 'day', times: { day: 'day', dusk: 'sunset' } },
   { id: 'terraces', name: 'Terrace Heights', blurb: 'A whitewashed hill village: hold the terraces, fight for the stairs and drop in on the Piazzetta.', theme: 'golden', times: { day: 'golden', dusk: 'sunset' } },
+  // new regions (2026-09-28): places in the Splatoon world no game has visited — built for Turf War, Zone Control and Tower Command
+  { id: 'nantai', name: 'Mount Nantai', blurb: 'The observatory grounds on Mount Nantai: cross the brook by bridge, weir or log and take the lawn from Grizzco\'s star party.', theme: 'day', times: { day: 'day', dusk: 'sunset' } },
+  { id: 'craters', name: 'Turf War Craters', blurb: 'Chalk downs above The Cape, scarred by the Great Turf War: fight down into the Great Crater and along the old trench lines.', theme: 'day', times: { day: 'day', dusk: 'sunset' } },
+  { id: 'calamari', name: 'Calamari County', blurb: 'Callie and Marie\'s snowy home village: fight over the little station, up its footbridges and down the lanes to the harbour.', theme: 'day', times: { day: 'day', dusk: 'sunset' } },
+  { id: 'spirhalite', name: 'Spirhalite Islands', blurb: 'An S-shaped chain of islets risen from the sea: hold the sandbar under the Great Arch, cross the lagoons or loop round by the causeway.', theme: 'golden', times: { day: 'golden', dusk: 'sunset' } },
+  { id: 'treehills', name: 'Eco-Forest Treehills', blurb: 'Alterna\'s tiered forest biome under a simulated sky: grow your team\'s hedges from the sprout pods and hold the meadow plaza.', theme: 'day', times: { day: 'day', dusk: 'sunset' } },
   // (src/world/stages/cargo, ported from PR #8's rebuilt Kelpline) — online only, humans only, never a Boss Battle
   { id: 'cargo', name: 'Cargo Terminal', blurb: 'A container terminal at shift change: a gantry crane straddles the pier between two moored box ships.', theme: 'day', times: { day: 'day', dusk: 'sunset' }, onlineOnly: true, noBots: true, noBoss: true },
 ];
@@ -556,6 +616,7 @@ export const PROGRESSION = {
   // Zone Control (5 min, so more turf gets inked than in a 3 min Turf War): turf counts for less, ink laid on the live
   // zone counts extra, and a knockout win pays a flat bonus — a typical match lands close to a Turf War's XP
   zones: { turfScale: 0.6, xpPerZoneTurfPoint: 1.0, xpKnockout: 300 },
+  tower: { turfScale: 0.6, xpPerRideSecond: 6, xpKnockout: 300 },   // Tower Command: per second riding the tower
 };
 
 // ---- Settings defaults (persisted in localStorage 'inkwave.settings') ----
@@ -571,10 +632,11 @@ export const DEFAULT_SETTINGS = {
   showFps: false,
   fpsCap: 0,                // frame rate limit: 0 = match the display (120 on ProMotion Macs), else 60 / 30
   master: 0.8, music: 0.6, sfx: 0.85,
+  cues: 1,                  // sfx-loud: the sub / special cue volume 0..1.5 (1 = the default cue mix; under Sound effects)
   colorblind: false,
   minimap: true,
   matchLength: 180,
-  lastMode: 'turf',         // battle mode last picked on the stage select: 'turf' | 'zones'
+  lastMode: 'turf',         // battle mode last picked on the stage select: 'turf' | 'zones' | 'tower' | 'boss'
   difficulty: 'normal',
   rumble: 1.0,              // gamepad vibration 0..1 (only while the pad is the last-used device)
   aimAssist: 1.0,           // gamepad aim assist 0..1

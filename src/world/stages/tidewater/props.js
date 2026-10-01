@@ -12,7 +12,7 @@
 // colonnade (covered walk below, terrace walk on top) along one side, the open promenade with its shelters, kiosks
 // and sea railings along the other, bandstands, a floral clock, the lifeboat station and the two piers out at sea.
 // Palette: cream / pastel stucco, sea-green painted cast iron, coral + navy accents, gilt details, slate roofs.
-import { SQ, PROM, TERR, COLO, STAIR, chainSections } from './layout.js';
+import { SQ, PROM, ESPL, TERR, COLO, STAIR, STAIR_REV, STAIR_AR, TW, GARDEN, TD, tq, chainSections } from './layout.js';
 
 const P = Math.PI;
 
@@ -549,14 +549,53 @@ export function register(D, H) {
     B.pop();
   }
   D.tidewater_clocktower = {
-    desc: 'Jubilee clock tower dressing for the 3.4 m square tower block (pos = centre of its base on the terrace, block rises 11.3 m): granite quoins, drinking-fountain troughs (±X) and JUBILEE plaques (±Z) on the plinth, string courses, tall lancet slots, four gabled clock stages with glowing dials, then (above the block) an open belfry with a bell, a balustrade, the copper ogee dome, a lantern and a ship weather vane (~18 m). Mirror-symmetric; place once (mirror:false).',
-    params: {}, variants: 1, mount: 'ground',
+    desc: 'Jubilee clock tower dressing for the 3.4 m square tower block (pos = centre of its base on the terrace, block rises 11.3 m): granite quoins, drinking-fountain troughs (±X) and JUBILEE plaques (±Z) on the plinth, string courses, tall lancet slots, four gabled clock stages with glowing dials, then (above the block) an open belfry with a bell, a balustrade, the copper ogee dome, a lantern and a ship weather vane (~18 m). open: the tower stands on an open arcade instead (the layout\'s TW.arcade piers + soffit: round arches on all four faces, archivolts + keystones, quoined piers, a frieze with bronze plaques under a cornice; the spandrels collide). Mirror-symmetric; place once (mirror:false).',
+    params: { top: 'block height over pos (m)', open: 'bool: the open-arcade base (Tower Command)' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
-      const Wd = 3.4, hw = Wd / 2, TOP = o.top ?? 11.3, stucco = K.stucco, trim = K.trim;
+      const Wd = 3.4, hw = Wd / 2, TOP = o.top ?? 11.3, stucco = K.stucco, trim = K.trim, open = !!o.open;
+      // the open arcade (heights prop-local: pos is on the dais): piers at the corners, a round arch on each face
+      const AR = TW.arcade, AW = AR.hw, OP = AR.open, PD = AW - OP, SP = AR.spring - TERR.daisTop, SO = AR.soffit - TERR.daisTop, AT = AR.top - TERR.daisTop;
+      const LIFT = open ? 1.9 : 0;   // the shaft's lancet slots ride up above the arcade
+      if (open) {
+        // wall between the piers over the springing, the half-disc of the arch cut out (profile: u across, y up)
+        const spand = [[OP, SP], [OP, SO], [-OP, SO], [-OP, SP], ...Array.from({ length: 23 }, (_, i) => { const a = PI - ((i + 1) / 24) * PI; return [Math.cos(a) * OP, SP + Math.sin(a) * OP]; })];
+        for (let side = 0; side < 4; side++) {
+          const ry = side * HP;
+          fpush(B, Math.sin(ry) * AW, 0, Math.cos(ry) * AW, ry);
+          B.add('paint', ext('twSpand', spand, PD), stucco, 0, 0, -PD / 2, { ry: HP });
+          // archivolts (both faces), keystone, impost bands on the jambs
+          for (const z of [0.04, -PD - 0.04]) B.tube('paint', trim, arcPts(0, SP, z, OP + 0.08, 0, PI, 18), 0.08, { radial: 5 });
+          pbox(B, 'paint', trim, 0.3, 0.34, 0.12, 0, SP + OP + 0.08, 0.06);
+          for (const sx of [-1, 1]) {
+            pbox(B, 'paint', trim, 0.12, 0.12, PD + 0.12, sx * (OP + 0.05), SP - 0.06, -PD / 2);
+            // pier: granite plinth + quoins on the outer corner
+            B.add('paint', ext('plinthTA', PROF.plinth, PD + 0.18), K.granite, sx * (AW - PD / 2), 0, 0, {});
+            quoins(B, sx * (AW - 0.01), 0.34, SP + 0.4, sx, '#c9c2b2');
+          }
+          // string course, frieze (bronze plaque), cornice; the soffit's inner cornice
+          mould(B, 'paint', trim, 'string', 2 * AW + 0.12, 0, SO - 0.12, 0);
+          pbox(B, 'paint', mixc(stucco, K.stoneDk, 0.25), 2 * AW - 0.1, AT - 0.36 - SO, 0.04, 0, SO + (AT - 0.36 - SO) / 2, 0.02);
+          B.add('paint', ext('cornTA', PROF.cornice, 2 * AW + 0.3), trim, 0, AT - 0.36, 0, {});
+          B.add('paint', ext('strTA', PROF.string, 2 * OP), trim, 0, SO - 0.12, -PD, { ry: PI });
+          pbox(B, 'paint', trim, 1.9, 0.42, 0.05, 0, SO + 0.26, 0.045);
+          pbox(B, 'metal', K.bronze, 1.7, 0.3, 0.03, 0, SO + 0.26, 0.075);
+          letters(B, side % 2 === 0 ? 'JUBILEE 1887' : 'VICTORIA R', { h: 0.13, x: 0, y: SO + 0.195, z: 0.094, c: '#f0d9a0', flat: true, wt: 0.22, track: 0.14, mat: 'metal' });
+          // the spandrels collide (stepped under the arch; clear of the tower and its riders)
+          for (const sx of [-1, 1]) for (const [u0, u1] of [[0.5, 1.0], [1.0, 1.3], [1.3, OP]]) {
+            const y0 = SP + Math.sqrt(OP * OP - u0 * u0);   // the arch's height at the strip's inner edge
+            COL(B, Math.min(sx * u0, sx * u1), y0, -PD, Math.max(sx * u0, sx * u1), SO, 0, { roof: true });
+          }
+          fpop(B);
+        }
+      }
       for (let side = 0; side < 4; side++) {
         const ry = side * HP;
         fpush(B, Math.sin(ry) * hw, 0, Math.cos(ry) * hw, ry);
+        if (open) {
+          // the shaft rises off the arcade: a granite base course on its top
+          B.add('paint', ext('plinthT', PROF.plinth, Wd + 0.18), K.granite, 0, AT, 0, {});
+        } else {
         // plinth: granite base course + quoins
         B.add('paint', ext('plinthT', PROF.plinth, Wd + 0.18), K.granite, 0, 0, 0, {});
         for (const sx of [-1, 1]) quoins(B, sx * (hw - 0.01), 0.34, 2.3, sx, '#c9c2b2');
@@ -578,13 +617,15 @@ export function register(D, H) {
           COL(B, -0.55, 0, 0, 0.55, 0.5, 0.43);
           B.box(NS('gloss'), K.water, 0.94, 0.02, 0.3, 0, 0.47, 0.22, { r: 0.01 });
         }
+        }
         // shaft: corner pilaster strips, a tall lancet slot with a hood mould
-        for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.28, TOP - 2.9 - 2.42, 0.05, sx * (hw - 0.14), 2.42 + (TOP - 2.9 - 2.42) / 2, 0.025);
-        B.add(NS('gloss'), archPanelGeo(0.42, 2.2, 8), K.glass, 0, 3.7, 0.012, {});
-        B.tube('paint', trim, arcPts(0, 5.9, 0.03, 0.29, 0, PI, 8), 0.045, { radial: 4 });
-        for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.08, 2.2, 0.06, sx * 0.29, 4.8, 0.03);
-        B.add('paint', ext('sillT', PROF.sill, 0.8), trim, 0, 3.62, 0, {});
-        mould(B, 'paint', trim, 'string', Wd + 0.16, 0, 6.9, 0);
+        const S0 = open ? AT + 0.34 : 2.42;
+        for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.28, TOP - 2.9 - S0, 0.05, sx * (hw - 0.14), S0 + (TOP - 2.9 - S0) / 2, 0.025);
+        B.add(NS('gloss'), archPanelGeo(0.42, 2.2, 8), K.glass, 0, 3.7 + LIFT, 0.012, {});
+        B.tube('paint', trim, arcPts(0, 5.9 + LIFT, 0.03, 0.29, 0, PI, 8), 0.045, { radial: 4 });
+        for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.08, 2.2, 0.06, sx * 0.29, 4.8 + LIFT, 0.03);
+        B.add('paint', ext('sillT', PROF.sill, 0.8), trim, 0, 3.62 + LIFT, 0, {});
+        if (!open) mould(B, 'paint', trim, 'string', Wd + 0.16, 0, 6.9, 0);
         // clock stage: cornice band, gablet over the dial, the dial
         mould(B, 'paint', trim, 'string', Wd + 0.16, 0, TOP - 2.95, 0);
         pbox(B, 'paint', mixc(stucco, K.stoneDk, 0.3), Wd - 0.5, 2.3, 0.04, 0, TOP - 1.65, 0.02);
@@ -827,8 +868,8 @@ export function register(D, H) {
   const secFrame = (B, s) => fpush(B, s.q0[0], 0, s.q0[1], (s.h * PI) / 180);
   const frontSpan = (s, i) => { const f0 = COLO.front[i], f1 = COLO.front[i + 1]; return [(f0[0] - s.q0[0]) * s.d[0] + (f0[1] - s.q0[1]) * s.d[1], (f1[0] - s.q0[0]) * s.d[0] + (f1[1] - s.q0[1]) * s.d[1]]; };
   D.tidewater_colonnade = {
-    desc: 'The Crescent’s cast-iron colonnade (site piece, pos = world origin, Alpha half; mirrored copy dresses Bravo’s): fluted sea-green columns (collide) at every bay and bend of the three bent sections, elliptical arches with pierced spandrels, the frieze on the terrace-walk edge, transverse girders + pendant lanterns, the walk railing (visual; the layout carries the rail collision), the landing pier, the mid stair’s handrail (rail collision), the open end’s stone piers.',
-    params: {}, variants: 1, mount: 'ground',
+    desc: 'The Crescent’s cast-iron colonnade (site piece, pos = world origin, Alpha half; mirrored copy dresses Bravo’s): fluted sea-green columns (collide) at every bay and bend of the three bent sections, elliptical arches with pierced spandrels, the frieze on the terrace-walk edge, transverse girders + pendant lanterns, the walk railing (visual; the layout carries the rail collision), the landing pier, the mid stair’s handrail (rail collision), the open end’s stone piers. rev: the stair turned round (layout STAIR_REV, Tower Command): an open landing at the walk’s end with its own stone pier + urn.',
+    params: { rev: 'bool: the turned-round stair (STAIR_REV)' }, variants: 1, mount: 'ground',
     build(B, o) {
       const c = K.iron;
       SECS.forEach((s, si) => {
@@ -852,34 +893,54 @@ export function register(D, H) {
         pbox(B, 'gloss', c, 0.03, 0.34, L, -0.015, YT + 0.17, L / 2);
         for (let z = 0.35; z < L - 0.2; z += 0.7) { B.tor(NS('gloss'), K.ironLt, 0.1, 0.016, -0.04, YT + 0.17, z, { ry: HP, rs: 3, ts: 10 }); B.sph(NS('gloss'), K.gold, 0.025, -0.04, YT + 0.17, z, { ws: 5, hs: 3 }); }
         for (let z = 0.12; z < L; z += 0.24) pbox(B, NS('gloss'), c, 0.02, 0.1, 0.1, -0.01, YT - 0.03, z, { rx: PI / 4 });
-        // walk railing (visual) on the first two sections; the north one is open to the stair / landing
+        // walk railing (visual) on the first three sections (the Assembly Rooms' open at their stair's landing); the north
+        // one is open to the stair / landing
         if (si < 2) { fpush(B, 0.08, DT, 0, 0); B.push(0, 0, 0, -HP); ironRail(B, L, { h: 1.0, col: false, p0: si === 0 }); B.pop(); fpop(B); }
+        if (si === 2) {
+          const a = STAIR_AR.top - s.q0[1], b = STAIR_AR.landing - s.q0[1];
+          for (const [z0, z1] of [[0, a], [b, L]]) { fpush(B, 0.08, DT, z0, 0); B.push(0, 0, 0, -HP); ironRail(B, z1 - z0, { h: 1.0, col: false, p0: z0 > 0 }); B.pop(); fpop(B); }
+        }
         fpop(B);
       });
       // the north section (axis-aligned) in world coordinates: landing pier, its south rail, the stair's handrail
-      const X0 = STAIR.x[0], X1 = STAIR.x[1], LZ0 = STAIR.landing, LZ1 = STAIR.top, SF = STAIR.foot;
-      fpush(B, X0, DT, LZ0 + 0.08, 0); ironRail(B, X1 - X0, { h: 1.0, col: false }); fpop(B);
-      pbox(B, 'gloss', c, 0.03, 0.34, LZ1 - LZ0, X0 - 0.015, YT + 0.17, (LZ0 + LZ1) / 2);
-      fpush(B, X0, 0, (LZ0 + LZ1) / 2, -HP);
-      B.add('paint', ext('plinthLd', PROF.plinth, LZ1 - LZ0), shade(K.stone, 0.9), 0, 0, 0, {});
-      for (const sx of [-1, 1]) quoins(B, sx * ((LZ1 - LZ0) / 2 - 0.01), 0.35, YT - 0.1, sx, '#c9c2b2');
-      fpop(B);
-      pierLamp(B, X0 + 0.2, DT, LZ1 - 0.2);
-      {
-        const n = 7, xr = X0 - 0.08;
-        for (let i = 0; i <= n; i++) { const t = i / n, z = SF + t * (LZ1 - SF), y = t * DT; B.lathe('gloss', c, [[0, 0], [0.05, 0], [0.035, 0.08], [0.03, 1.0], [0.04, 1.04], [0, 1.08]], xr, y, z, { seg: 6 }); }
-        B.tube('gloss', c, [P3(xr, 1.02, SF), P3(xr, DT + 1.02, LZ1)], 0.03, { radial: 6 });
-        B.tube(NS('gloss'), c, [P3(xr, 0.55, SF), P3(xr, DT + 0.55, LZ1)], 0.016, { radial: 4 });
-        for (let i = 0; i < 24; i++) { const t = (i + 0.5) / 24, z = SF + t * (LZ1 - SF), y = t * DT; B.cyl(NS('gloss'), c, 0.008, 0.9, xr, y + 0.55, z, { seg: 4 }); }
-        const mm = 8; for (let i = 0; i < mm; i++) { const t0 = i / mm, t1 = (i + 1) / mm, za = SF + t0 * (LZ1 - SF), zb = SF + t1 * (LZ1 - SF); COL(B, xr - 0.1, 0, Math.min(za, zb), X0 + 0.02, t1 * DT + 1.12, Math.max(za, zb), { rail: true }); }
-        B.lathe('gloss', c, [[0, 0], [0.14, 0], [0.14, 0.1], [0.08, 0.2], [0.07, 1.2], [0.1, 1.28], [0, 1.3]], xr, 0, SF + 0.25, { seg: 8 });
-        lantern(B, xr, 1.3, SF + 0.25, 1.0);
-      }
+      // (rev: the stair turned round — the landing meets the walk's open end and stays open like it); the Assembly Rooms'
+      // stair (the stretch) the same way, its foot on the Winter Gardens' paving
+      stairDress(B, !!o.rev ? STAIR_REV : STAIR, !!o.rev, !!o.rev ? SQ : 0);
+      stairDress(B, STAIR_AR, false, SQ);
       // stone piers + urns marking the open north end of the walk
       const P3e = COLO.front[COLO.front.length - 1];
       for (const x of [P3e[0] - DK + 0.25, P3e[0] - 0.25]) { B.box('paint', K.stone, 0.42, 1.0, 0.42, x, DT + 0.5, P3e[1] - 0.25, { r: 0.03 }); pbox(B, 'paint', K.trim, 0.5, 0.08, 0.5, x, DT + 1.04, P3e[1] - 0.25); urn(B, x, DT + 1.08, P3e[1] - 0.25, K.coral); colBox(B, x, DT, P3e[1] - 0.25, 0.42, 1.0, 0.42, { roof: true }); }
     },
   };
+  // a Crescent stair's dressing (world coordinates, ST = STAIR / STAIR_REV / STAIR_AR): the rail across the landing's
+  // far end (not on a turned stair's open landing), the landing pier's plinth + quoins, its lamp, the stair's handrail
+  // along the square side (rail collision) with a newel lantern at the foot (y0 = the foot's floor)
+  function stairDress(B, ST, rev, y0) {
+    const c = K.iron;
+    {
+      const X0 = ST.x[0], X1 = ST.x[1], LZ0 = ST.landing, LZ1 = ST.top, SF = ST.foot, LL = Math.abs(LZ1 - LZ0), ld = Math.sign(LZ0 - LZ1), sd = Math.sign(SF - LZ1);
+      if (!rev) { fpush(B, ld < 0 ? X0 : X1, DT, LZ0 - 0.08 * ld, ld < 0 ? 0 : PI); ironRail(B, X1 - X0, { h: 1.0, col: false }); fpop(B); }
+      pbox(B, 'gloss', c, 0.03, 0.34, LL, X0 - 0.015, YT + 0.17, (LZ0 + LZ1) / 2);
+      fpush(B, X0, 0, (LZ0 + LZ1) / 2, -HP);
+      B.add('paint', ext('plinthLd', PROF.plinth, LL), shade(K.stone, 0.9), 0, 0, 0, {});
+      for (const sx of [-1, 1]) quoins(B, sx * (LL / 2 - 0.01), 0.35, YT - 0.1, sx, '#c9c2b2');
+      fpop(B);
+      pierLamp(B, X0 + 0.2, DT, LZ1 + 0.2 * ld);
+      if (rev) { const x = X0 + 0.25, z = LZ0 - 0.25 * ld; B.box('paint', K.stone, 0.42, 1.0, 0.42, x, DT + 0.5, z, { r: 0.03 }); pbox(B, 'paint', K.trim, 0.5, 0.08, 0.5, x, DT + 1.04, z); urn(B, x, DT + 1.08, z, K.coral); colBox(B, x, DT, z, 0.42, 1.0, 0.42, { roof: true }); }
+      {
+        const n = 7, xr = X0 - 0.08;
+        const yA = (t) => y0 + t * (DT - y0);
+        for (let i = 0; i <= n; i++) { const t = i / n, z = SF + t * (LZ1 - SF), y = yA(t); B.lathe('gloss', c, [[0, 0], [0.05, 0], [0.035, 0.08], [0.03, 1.0], [0.04, 1.04], [0, 1.08]], xr, y, z, { seg: 6 }); }
+        B.tube('gloss', c, [P3(xr, y0 + 1.02, SF), P3(xr, DT + 1.02, LZ1)], 0.03, { radial: 6 });
+        B.tube(NS('gloss'), c, [P3(xr, y0 + 0.55, SF), P3(xr, DT + 0.55, LZ1)], 0.016, { radial: 4 });
+        for (let i = 0; i < 24; i++) { const t = (i + 0.5) / 24, z = SF + t * (LZ1 - SF), y = yA(t); B.cyl(NS('gloss'), c, 0.008, 0.9, xr, y + 0.55, z, { seg: 4 }); }
+        const mm = 8; for (let i = 0; i < mm; i++) { const t0 = i / mm, t1 = (i + 1) / mm, za = SF + t0 * (LZ1 - SF), zb = SF + t1 * (LZ1 - SF); COL(B, xr - 0.1, Math.min(0, y0), Math.min(za, zb), X0 + 0.02, yA(t1) + 1.12, Math.max(za, zb), { rail: true }); }
+        const ny = y0;   // (the foot's floor: the forecourt at 0, the square at SQ)
+        B.lathe('gloss', c, [[0, 0], [0.14, 0], [0.14, 0.1], [0.08, 0.2], [0.07, 1.2], [0.1, 1.28], [0, 1.3]], xr, ny, SF + 0.25 * sd, { seg: 8 });
+        lantern(B, xr, ny + 1.3, SF + 0.25 * sd, 1.0);
+      }
+    }
+  }
 
   // ------------------------------------------------------------------------------------------ the Crescent's frontage
   // bay window (projects from the wall, first floor and up): canted sides, sashes, cornice + lead roof
@@ -901,12 +962,16 @@ export function register(D, H) {
     ['POST OFFICE', '#b8342c', K.gold, {}],
     ['ICES & TEAS', '#5f9f8c', K.white, { doorLeft: true }],
     ['BUCKETS & SPADES', K.yellow, K.navy, { lh: 0.17 }],
+    // (the Assembly Rooms' ground floor under the colonnade: the stretch's fourth house)
+    ['BOX OFFICE', '#3f5f7a', K.gold, { lit: 0.9 }],
+    ['READING ROOM', '#6a4a3a', K.white, { doorLeft: true }],
+    ['TEA ROOM', '#4f7a5f', K.white, { lit: 0.9 }],
     ['SEASIDE GIFTS', '#6b7fb3', K.white, { doorLeft: true }],
     ['SWEETS', '#c97a9a', K.white, {}],
     ['THE ANCHOR', '#2f4a3a', K.gold, { lit: 0.9 }],
   ];
   D.tidewater_arcadefront = {
-    desc: 'The Crescent’s frontage (site piece, pos = world origin, Alpha half): nine shopfronts on the covered walk (PENNY ARCADE … THE ANCHOR) with wares out front (small cover, collides) and blade signs, then above the terrace walk the three buildings of the bent terrace: seaside houses with bay windows, the GRAND HOTEL (glazed canopy, parapet, roof letters), a turreted corner house at the mid end; slate roofs, chimneys, dormers, the sea-side backs.',
+    desc: 'The Crescent’s frontage (site piece, pos = world origin, Alpha half): twelve shopfronts on the covered walk (PENNY ARCADE … THE ANCHOR) with wares out front (small cover, collides) and blade signs, then above the terrace walk the four buildings of the bent terrace: seaside houses with bay windows, the GRAND HOTEL (glazed canopy, parapet, roof letters), the ASSEMBLY ROOMS (ballroom windows between giant pilasters, a pedimented frontispiece over its stair\'s landing, a parapet, a glazed roof lantern), a turreted corner house at the mid end; slate roofs, chimneys, dormers, the sea-side backs.',
     params: {}, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
@@ -918,7 +983,7 @@ export function register(D, H) {
         for (let k = 0; k < ns; k++) {
           const zc = f0 + (Wf * (k + 0.5)) / ns, [name, cc, lc, extra] = SHOPS[shopIdx++ % SHOPS.length];
           fpush(B, DK, 0, zc, -HP); shopfront(B, Wf / ns - 0.12, name, { c: cc, lc, ...extra }); fpop(B);
-          if (!(si === 1 && k === 0) && !(si === 2 && k === 2)) wares(B, DK - 0.65, zc + (extra.doorLeft ? 0.7 : -0.7), (shopIdx + si) % 4);
+          if (!(si === 1 && k === 0) && !(si === 3 && k === 2)) wares(B, DK - 0.65, zc + (extra.doorLeft ? 0.7 : -0.7), (shopIdx + si) % 4);
           if (k < ns - 1 && (k + si) % 2 === 0) {
             const z = f0 + (Wf * (k + 1)) / ns, [t, bc, lc2] = [['ROCK', '#e8a7b8', K.navy], ['POST', '#b8342c', K.gold], ['GIFTS', '#6b7fb3', K.white], ['ALES', '#2f4a3a', K.gold]][(si + k) % 4];
             B.box('paint', bc, 0.05, 0.42, 0.8, DK - 0.75, 2.55, z, { r: 0.02 });
@@ -955,6 +1020,52 @@ export function register(D, H) {
           B.pop();
           B.push(xc, top, -1.5); B.add('paint', tpl('roofB' + Wf.toFixed(2), () => extrudeGeo([[-1.6, 0], [1.6, 0], [0.5, 1.4], [-0.5, 1.4]], 1, 0.001)), K.slate, 0, 0, 0, { sx: Wf + 0.2 }); B.pop();
           for (const x of [0.6, Wf - 0.6]) { B.cyl('paint', K.white, 0.05, 3.2, x, top + 1.6, 0.1, { seg: 6 }); B.flag(x, top + 3.0, 0.1, { color: x < xc ? K.navy : K.coral, s: 1.5, ry: -HP }); }
+        } else if (si === 2) {
+          // the Assembly Rooms: stucco palazzo front over the terrace walk — tall round-headed ballroom windows between
+          // giant pilasters, a frontispiece of four attached columns with a pediment over the stair's landing (double doors
+          // onto the walk, ASSEMBLY ROOMS on the frieze), a cornice + balustraded parapet with urns, a hipped slate roof
+          // with a glazed lantern over the ballroom
+          const c = K.stucco, top = 9.7, xp = (STAIR_AR.top + STAIR_AR.landing) / 2 - s.q0[1] - f0;
+          const bays = (off) => { const xs = []; for (let k = 0; k < 8; k++) for (const sg of [-1, 1]) { const x = xp + sg * (off + k * 2.6); if (x > 0.9 && x < Wf - 0.9) xs.push(x); } return xs; };
+          for (const x of bays(3.5)) {
+            archOpening(B, x, 3.75, 1.2, 2.35, { lit: 0.85, fan: true });
+            pbox(B, 'gloss', K.ironDk, 1.5, 0.04, 0.3, x, 3.72, 0.17);
+            for (let i = 0; i <= 6; i++) B.cyl(NS('gloss'), K.ironDk, 0.012, 0.52, x - 0.72 + i * 0.24, 3.98, 0.3, { seg: 4 });
+            B.cyl('gloss', K.ironDk, 0.02, 1.5, x, 4.24, 0.3, { rz: HP, seg: 5 });
+            sash(B, x, 7.05, 0.9, 1.05, { frame: K.trim, lit: 0.5, key: false });
+          }
+          for (const x of [...bays(4.8), 0.3, Wf - 0.3]) pilaster(B, x, 3.2, 9.25, 0.46, K.trim, 0.1);
+          mould(B, 'paint', K.trim, 'string', Wf, Wf / 2, 6.72, 0);
+          // the frontispiece: four attached Corinthian-ish columns, entablature with the name, pediment, doors
+          for (const dx of [-2.15, -0.95, 0.95, 2.15]) {
+            B.lathe('paint', K.trim, [[0, 0], [0.3, 0], [0.3, 0.14], [0.24, 0.24], [0.21, 0.3], [0.18, 5.1], [0.25, 5.2], [0.3, 5.36], [0, 5.36]], xp + dx, 3.2, 0.2, { seg: 12 });
+            for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU; pbox(B, NS('paint'), shade(K.trim, 0.9), 0.02, 4.7, 0.02, xp + dx + Math.cos(a) * 0.19, 5.75, 0.2 + Math.sin(a) * 0.19); }
+          }
+          B.box('paint', K.trim, 5.6, 0.62, 0.62, xp, 8.87, 0.3, { r: 0.03 });
+          pbox(B, 'paint', K.navy, 4.9, 0.34, 0.01, xp, 8.84, 0.615);
+          letters(B, 'ASSEMBLY ROOMS', { h: 0.22, x: xp, y: 8.73, z: 0.62, c: K.gold, mat: 'metal', dep: 0.03, bev: 0, wt: 0.2, track: 0.12 });
+          B.add('paint', triGeo(5.9, 1.45), K.trim, xp, 9.18, 0.32, {});
+          B.add('paint', triGeo(5.2, 1.15), c, xp, 9.3, 0.34, {});
+          for (const sg of [-1, 1]) { B.push(xp + sg * 1.475, 9.18 + 0.725, 0.52, 0, 0, -sg * Math.atan2(1.45, 2.95)); pbox(B, 'paint', K.trim, Math.hypot(1.45, 2.95) + 0.1, 0.14, 0.44, 0, 0, 0); B.pop(); }
+          B.cyl('metal', K.gold, 0.4, 0.06, xp, 9.72, 0.36, { rx: HP, seg: 16 });
+          B.cyl('paint', K.navy, 0.32, 0.03, xp, 9.72, 0.39, { rx: HP, seg: 16 });
+          for (let k = 0; k < 12; k++) { const a = (k / 12) * TAU; pbox(B, NS('metal'), K.gold, 0.03, 0.12, 0.01, xp + Math.cos(a) * 0.24, 9.72 + Math.sin(a) * 0.24, 0.41, { rz: a }); }
+          archOpening(B, xp, 3.2, 1.6, 2.3, { door: '#5a3a2a', lit: 0.9, key: K.stone });
+          for (const dx of [-1.55, 1.55]) { pbox(B, 'gloss', K.ironDk, 0.06, 0.4, 0.2, xp + dx, 4.95, 0.1); lantern(B, xp + dx, 4.6, 0.3, 0.85); }
+          COL(B, xp - 3.0, 8.5, -0.1, xp + 3.0, 10.7, 0.9, { roof: true });
+          // cornice, parapet, the roof and the ballroom's lantern
+          B.add('paint', ext('cornD' + Wf.toFixed(2), PROF.cornice, Wf + 0.2), K.trim, Wf / 2, top - 0.36, 0, {});
+          B.push(0.1, top, 0.1); balustrade(B, Wf - 0.2, { h: 0.8, bay: 2.6, col: false, urns: 2, urnC: K.coral, seg: 5 }); B.pop();
+          B.push(Wf / 2, top, -1.5); B.add('paint', tpl('roofD' + Wf.toFixed(2), () => extrudeGeo([[-1.6, 0], [1.6, 0], [0.5, 1.5], [-0.5, 1.5]], 1, 0.001)), K.slate, 0, 0, 0, { sx: Wf + 0.2 }); B.pop();
+          B.push(xp, top + 1.5, -1.5);
+          B.lathe('paint', K.trim, [[1.2, 0], [1.2, 0.2], [1.05, 0.25], [0, 0.25]], 0, 0, 0, { seg: 8, ry: PI / 8 });
+          B.lathe('gloss', K.glassLt, [[1.0, 0.25], [1.0, 1.4], [0, 1.4]], 0, 0, 0, { seg: 8, ry: PI / 8 });
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU + PI / 8; pbox(B, 'paint', K.trim, 0.08, 1.15, 0.08, Math.cos(a) * 1.0, 0.82, Math.sin(a) * 1.0); }
+          B.lathe('paint', K.copper, [[1.15, 1.4], [0.8, 1.9], [0.25, 2.3], [0, 2.35]], 0, 0, 0, { seg: 8, ry: PI / 8 });
+          B.sph('metal', K.gold, 0.1, 0, 2.45, 0, { ws: 8, hs: 6 });
+          B.pop();
+          COL(B, xp - 1.3, top, -2.8, xp + 1.3, top + 4.0, -0.2, { roof: true });
+          for (const x of [0.6, Wf - 0.6]) { B.cyl('paint', K.white, 0.05, 3.0, x, top + 1.5, 0.1, { seg: 6 }); B.flag(x, top + 2.8, 0.1, { color: x < Wf / 2 ? K.coral : K.navy, s: 1.5, ry: -HP }); }
         } else {
           const c = K.mint, top = 3.5 + 3.2;
           for (const x of [Wf * 0.17, Wf * 0.47, Wf * 0.72]) { archOpening(B, x, 3.2, 1.1, 1.6, { door: '#7a4a3a', lit: 0.8 }); sash(B, x, 5.05, 0.9, 1.2, { frame: K.trim, hood: 'cornice', lit: 0.6 }); }
@@ -978,7 +1089,7 @@ export function register(D, H) {
         fpop(B);
       });
       // the Crescent's end house over the spawn-wing corner (out of play): a hipped slate roof on its block
-      B.push(21.45, 5.4, -41.85);
+      B.push(21.45, 5.4, tq(-41.85));
       B.lathe('paint', K.slate, [[5.05, 0], [2.6, 1.6], [0, 1.7]], 0, 0, 0, { seg: 4, ry: PI / 4 });
       B.box('paint', K.pink, 0.8, 1.4, 0.6, 1.6, 1.3, 1.2, { r: 0.03 });
       B.pop();
@@ -990,15 +1101,22 @@ export function register(D, H) {
   // vertices, railings on the six faces without steps (collide), fretwork frieze, an ogee roof with a cresting and a
   // lantern cupola, music stands + chairs, pendant lamps; grilles on the stage's plinth faces
   D.tidewater_bandstand = {
-    desc: 'Victorian bandstand dressing for the octagonal 1 m stage (pos = stage centre at ground level, R 3.8): eight sea-green cast-iron columns (collide), railings on the six step-less faces (collide), fretwork frieze, cream + coral ogee roof with cresting, cupola lantern and lyre vane, music stands and chairs, pendant lanterns; cast-iron grilles on the plinth faces.',
-    params: { R: 'circumradius (3.8)' }, variants: 1, mount: 'ground',
+    desc: 'Victorian bandstand dressing for the octagonal 1 m stage (pos = stage centre at ground level, R 3.8): eight sea-green cast-iron columns (collide), railings on the six step-less faces (collide), fretwork frieze, cream + coral ogee roof with cresting, cupola lantern and lyre vane, music stands and chairs, pendant lanterns; cast-iron grilles on the plinth faces. Tower Command (ct / wide / back): a taller column height, the four columns by the steps set wide along the diagonal faces (a 2.5 m tower rides between them) with the stage kept clear on that line, and a step-less open back (-Z) face.',
+    params: { R: 'circumradius (3.8)', ct: 'column top over pos (4.1)', wide: 'bool: steps-side columns set wide', back: 'bool: steps on -Z (true)' }, variants: 1, mount: 'ground',
     build(B, o) {
-      const R = o.R ?? 3.8, A = R * Math.cos(PI / 8), c = K.iron, FL = 1.0, CT = 4.1, rc = R - 0.28;
-      const V = (k, r = rc) => { const a = PI / 8 + (k * PI) / 4; return [Math.cos(a) * r, Math.sin(a) * r]; };
+      const R = o.R ?? 3.8, A = R * Math.cos(PI / 8), c = K.iron, FL = 1.0, CT = o.ct ?? 4.1, rc = R - 0.28, wide = !!o.wide, back = o.back !== false;
+      const V0 = (k, r = rc) => { const a = PI / 8 + (k * PI) / 4; return [Math.cos(a) * r, Math.sin(a) * r]; };
+      // the columns (wide: the four beside the ±Z faces slide out along their diagonal face, 0.2 m in from its edge)
+      const V = (k, r = rc) => {
+        const [x, z] = V0(k, r), kk = ((k % 8) + 8) % 8;
+        if (!wide || r !== rc || !(kk === 1 || kk === 2 || kk === 5 || kk === 6)) return [x, z];
+        const sx = Math.sign(x), sz = Math.sign(z), X = 1.62;
+        return [sx * X, sz * (A * Math.SQRT2 - 0.2 * Math.SQRT2 - X)];
+      };
       // plinth faces: arched grilles
       for (let k = 0; k < 8; k++) {
         const a = (k * PI) / 4, fx = Math.cos(a) * A, fz = Math.sin(a) * A;
-        if (Math.abs(Math.sin(a)) > 0.99) continue;   // ±Z faces carry the steps
+        if (Math.abs(Math.sin(a)) > 0.99 && (back || Math.sin(a) > 0)) continue;   // ±Z faces carry the steps
         B.push(fx, 0, fz, HP - a);
         B.add(NS('paint'), archPanelGeo(0.7, 0.4, 8), K.ironDk, 0, 0.18, 0.012, {});
         for (let i = -2; i <= 2; i++) pbox(B, NS('gloss'), c, 0.025, 0.72, 0.03, i * 0.13, 0.52, 0.03);
@@ -1052,11 +1170,12 @@ export function register(D, H) {
       B.tube('metal', K.gold, [P3(-0.18, 0, 0), P3(-0.22, 0.2, 0), P3(-0.14, 0.4, 0), P3(0, 0.46, 0), P3(0.14, 0.4, 0), P3(0.22, 0.2, 0), P3(0.18, 0, 0)], 0.018, { radial: 4 });
       for (let i = -1; i <= 1; i++) pbox(B, 'metal', K.gold, 0.008, 0.36, 0.008, i * 0.06, 0.2, 0);
       B.pop();
-      // under the roof: pendant lamps, music stands, chairs (no colliders — the stage stays open)
-      for (let k = 0; k < 8; k += 2) { const [x, z] = V(k, 2.2); B.cyl(NS('metal'), K.ironDk, 0.008, 0.6, x, RY - 0.3, z, { seg: 4 }); lantern(B, x, RY - 1.2, z, 0.75); }
+      // under the roof: pendant lamps, music stands, chairs (no colliders — the stage stays open; wide: none on the
+      // line the tower rides, |x| < 1.8)
+      for (let k = 0; k < 8; k += wide ? 4 : 2) { const [x, z] = V(k, 2.2); B.cyl(NS('metal'), K.ironDk, 0.008, 0.6, x, RY - 0.3, z, { seg: 4 }); lantern(B, x, RY - 1.2, z, 0.75); }
       for (let k = 0; k < 7; k++) {
         const a = -PI * 0.1 + (k / 6) * PI * 1.2 + HP, r = 1.9, x = Math.cos(a) * r, z = Math.sin(a) * r * 0.9;
-        if (Math.abs(x) < 1.4) continue;
+        if (Math.abs(x) < (wide ? 1.8 : 1.4)) continue;
         B.push(x, FL, z, -a - HP);
         pbox(B, 'wood', K.wood, 0.4, 0.04, 0.4, 0, 0.45, 0);
         for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) pbox(B, NS('wood'), K.wood, 0.03, 0.45, 0.03, sx * 0.17, 0.22, sz * 0.17);
@@ -1067,8 +1186,9 @@ export function register(D, H) {
         B.pop();
       }
       // a timpani + a bass drum on the stage's back
-      B.lathe('metal', K.copper, [[0, 0], [0.3, 0.05], [0.36, 0.3], [0.36, 0.55], [0, 0.55]], 1.1, FL, 1.9, { seg: 12 });
-      B.cyl('paint', K.coral, 0.34, 0.28, 1.6, FL + 0.4, 1.5, { rx: HP, rz: 0.5, seg: 14 });
+      const dx = wide ? 1.2 : 0, dz = wide ? -0.7 : 0;
+      B.lathe('metal', K.copper, [[0, 0], [0.3, 0.05], [0.36, 0.3], [0.36, 0.55], [0, 0.55]], 1.1 + dx, FL, 1.9 + dz, { seg: 12 });
+      B.cyl('paint', K.coral, 0.34, 0.28, 1.6 + dx, FL + 0.4, 1.5 + dz, { rx: HP, rz: 0.5, seg: 14 });
       B.blob(8.5, 8.5);
     },
   };
@@ -1076,13 +1196,13 @@ export function register(D, H) {
   // ------------------------------------------------------------------------------------------ the fountain
   D.tidewater_fountain = {
     desc: 'Town Hall Square fountain (pos = centre): granite basin 4.8 m across (0.34 m kerb, walk-over), water, a tiered cast-iron fountain — dolphin pedestal, scalloped lower bowl, upper bowl, gilt ship finial — with falling water; the pedestal + lower bowl collide (cover).',
-    params: {}, variants: 1, mount: 'ground',
+    params: { Rb: 'basin radius (2.4)' }, variants: 1, mount: 'ground',
     build(B, o) {
-      const Rb = 2.4;
+      const Rb = o.Rb ?? 2.4;
       B.lathe('paint', K.granite, [[Rb - 0.34, 0.33], [Rb - 0.3, 0.36], [Rb - 0.02, 0.36], [Rb + 0.02, 0.3], [Rb + 0.04, 0.05], [Rb + 0.1, 0], [0, 0]], 0, 0, 0, { seg: 24 });
       B.lathe('paint', shade(K.granite, 0.8), [[0, 0.05], [Rb - 0.33, 0.05], [Rb - 0.33, 0.3]], 0, 0, 0, { seg: 24 });
       B.lathe(NS('gloss'), '#6fb3b8', [[0, 0.26], [Rb - 0.32, 0.26]], 0, 0, 0, { seg: 24 });
-      for (let k = 0; k < 16; k++) { const a = (k / 16) * TAU, r = 2.25; colBox(B, Math.cos(a) * r, 0, Math.sin(a) * r, 0.5, 0.34, 0.5); }
+      for (let k = 0; k < 16; k++) { const a = (k / 16) * TAU, r = Rb - 0.15; colBox(B, Math.cos(a) * r, 0, Math.sin(a) * r, 0.5, 0.34, 0.5); }
       // pedestal with three dolphins, lower bowl, upper bowl, finial
       B.lathe('paint', K.granite, [[0, 0.26], [0.7, 0.26], [0.7, 0.5], [0.6, 0.56], [0.5, 0.56], [0, 0.56]], 0, 0, 0, { seg: 12 });
       B.lathe('gloss', K.iron, [[0, 0.56], [0.3, 0.56], [0.26, 0.7], [0.18, 0.9], [0.16, 1.3], [0.22, 1.45], [0, 1.45]], 0, 0, 0, { seg: 12 });
@@ -1114,7 +1234,7 @@ export function register(D, H) {
       colBox(B, 0, 0, 0, 1.3, 1.45, 1.3, { roof: true });
       colBox(B, 0, 1.45, 0, 2.1, 0.3, 2.1, { roof: true });
       colBox(B, 0, 1.75, 0, 0.4, 0.85, 0.4, { roof: true });
-      B.blob(5.6, 5.6);
+      B.blob((5.6 * Rb) / 2.4, (5.6 * Rb) / 2.4);
     },
   };
 
@@ -1931,13 +2051,320 @@ export function register(D, H) {
     },
   };
 
+  // ================================================================================================ the Winter Gardens
+  // (the Long Stages stretch, 2026-09-30: layout.js GARDEN) — the Palm House and its terrace, the garden's topiary, tub
+  // palms, the drinking fountain, the coxswain's statue, the carpet beds, the esplanade's seat shelters
+
+  // ---- the Palm House: dresses the layout's plinth + glass collider + terrace (pos = the plinth's centre on the square,
+  //      front +Z to the terrace and mid): a cast-iron glasshouse — two glazed wings with curved roofs either side of a
+  //      taller central pavilion carrying a ribbed glass dome, a lantern and a finial; white-painted glazing bars on
+  //      pale glass, a gutter cornice with cresting, the doors onto the terrace, a stove stack at the back. On the terrace:
+  //      the stone balustrade with urns, THE WINTER GARDENS on its front face, flight balustrades. The roofs collide
+  //      (off limits); the walls are the layout's glass collider.
+  D.tidewater_palmhouse = {
+    desc: 'The Winter Gardens Palm House over its plinth (pos = plinth centre on the square, front +Z): glazed wings with barrel-vault roofs, central pavilion with a ribbed glass dome, lantern + finial, glazing bars, gutter cornice + iron cresting, terrace doors, rear stove stack; the terrace balustrade between its two flights (visual), urns, THE WINTER GARDENS on the terrace front. Roof colliders (off limits).',
+    params: { w: 'plinth length along X (12.8)', d: 'plinth depth (6.4)', plinth: 'plinth top above pos (1.1)', glass: 'wall top above pos (5.6)', td: 'terrace depth (3.2)', tt: 'terrace top above pos (1.4)', fx: 'the flights\' inner edge |x| (4.0)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const W = o.w ?? 12.8, Dd = o.d ?? 6.4, PT = o.plinth ?? 1.1, GT = o.glass ?? 5.6, TD = o.td ?? 3.2, TT = o.tt ?? 1.4, FX = o.fx ?? 4.0;
+      const hw = W / 2, hd = Dd / 2, CW = 3.0, CT = GT + 1.4, iron = K.white, ironDk = '#d9d6cc', glass = '#b9d5d0', glassDk = '#98bab6', stone = K.stone;
+      const WY = PT + 0.12;   // glass walls start on the coping
+      // ---- plinth coping + base course + iron grilles (the plinth is the layout block)
+      B.box('paint', stone, W + 0.12, 0.14, Dd + 0.12, 0, PT + 0.05, 0, { r: 0.03 });
+      for (const [sx, sz, L, ry] of [[0, -1, W, PI], [1, 0, Dd, HP], [-1, 0, Dd, -HP]]) {
+        fpush(B, sx * hw, 0, sz * hd, ry);
+        pbox(B, 'paint', K.stoneDk, L + 0.06, 0.16, 0.05, 0, 0.1, 0.02);
+        for (let x = -L / 2 + 1.1; x < L / 2 - 0.8; x += 2.1) { pbox(B, NS('metal'), K.ironDk, 0.5, 0.26, 0.02, x, PT * 0.55, 0.012); for (let k = -2; k <= 2; k++) pbox(B, NS('metal'), '#1f2a2c', 0.02, 0.22, 0.02, x + k * 0.09, PT * 0.55, 0.02); }
+        fpop(B);
+      }
+      // ---- glazed walls: a pane per face strip, the bars over it; the pavilion's walls rise to CT
+      const wall = (L, y0, y1, bay, ry, x, z) => {
+        fpush(B, x, 0, z, ry);
+        pbox(B, 'gloss', glass, L, y1 - y0, 0.02, 0, (y0 + y1) / 2, 0.02);
+        const n = Math.max(1, Math.round(L / bay));
+        for (let i = 0; i <= n; i++) pbox(B, 'paint', iron, 0.07, y1 - y0, 0.07, -L / 2 + (i * L) / n, (y0 + y1) / 2, 0.05);
+        for (const y of [y0 + 0.05, y0 + (y1 - y0) * 0.45, y1 - 0.05]) pbox(B, 'paint', iron, L, 0.07, 0.07, 0, y, 0.05);
+        for (let i = 0; i < n; i++) pbox(B, NS('paint'), ironDk, 0.03, y1 - y0 - 0.1, 0.03, -L / 2 + ((i + 0.5) * L) / n, (y0 + y1) / 2, 0.045);
+        fpop(B);
+      };
+      const wingL = hw - CW;
+      for (const s of [-1, 1]) {
+        const xc = s * (CW + wingL / 2);
+        wall(wingL, TT, GT, 0.7, 0, xc, hd + 0.03);            // front (over the terrace)
+        wall(wingL, WY, GT, 0.7, PI, xc, -hd - 0.03);          // back
+        wall(Dd, WY, GT, 0.72, s * HP, s * (hw + 0.03), 0);    // end
+      }
+      wall(CW * 2, TT, CT, 0.72, 0, 0, hd + 0.03);
+      wall(CW * 2, WY, CT, 0.72, PI, 0, -hd - 0.03);
+      for (const s of [-1, 1]) wall(Dd, GT, CT, 0.72, s * HP, s * (CW + 0.03), 0);   // the pavilion's side walls above the wings
+      // corner piers: fluted iron columns with capitals at every corner of the wings and the pavilion
+      for (const [x, z] of [[-hw, -hd], [-hw, hd], [hw, -hd], [hw, hd], [-CW, -hd], [-CW, hd], [CW, -hd], [CW, hd]]) {
+        const top = Math.abs(x) < CW + 0.1 ? CT : GT, y0 = z > 0 ? TT : WY;
+        B.lathe('paint', iron, [[0, y0], [0.12, y0], [0.12, y0 + 0.12], [0.08, y0 + 0.2], [0.07, top - 0.3], [0.12, top - 0.18], [0.12, top], [0, top]], x, 0, z, { seg: 8 });
+      }
+      // ---- gutter cornices: along the wings at GT, round the pavilion at CT, with an iron cresting on the pavilion
+      for (const s of [-1, 1]) {
+        const xc = s * (CW + wingL / 2);
+        for (const sz of [-1, 1]) B.box('paint', iron, wingL + 0.2, 0.18, 0.26, xc, GT + 0.06, sz * (hd + 0.1), { r: 0.03 });
+        B.box('paint', iron, 0.26, 0.18, Dd + 0.4, s * (hw + 0.1), GT + 0.06, 0, { r: 0.03 });
+      }
+      B.box('paint', iron, CW * 2 + 0.3, 0.2, Dd + 0.4, 0, CT + 0.07, 0, { r: 0.03 });
+      for (const sz of [-1, 1]) for (let x = -CW; x <= CW + 0.01; x += 0.36) B.lathe(NS('paint'), iron, [[0, 0], [0.03, 0], [0.02, 0.18], [0.05, 0.24], [0, 0.32]], x, CT + 0.17, sz * (hd + 0.15), { seg: 5 });
+      // ---- wing roofs: glass barrel vaults along X (springing at GT, rise 1.4) with iron ribs every 0.85 m
+      const rise = 1.4, prof = [];
+      for (let i = 0; i <= 12; i++) { const a = (i / 12) * PI; prof.push([Math.cos(a) * (hd + 0.05), Math.sin(a) * rise]); }
+      const vaultGeo = tpl(['pvault', hd, rise].map(kf).join('|'), () => extrudeGeo([...prof, ...prof.slice().reverse().map(([zz, yy]) => [zz * 0.985, yy * 0.97])], 1, 0.001));
+      for (const s of [-1, 1]) {
+        const xc = s * (CW + wingL / 2);
+        B.add('gloss', vaultGeo, glassDk, xc, GT + 0.12, 0, { sx: wingL });
+        const nr = Math.max(2, Math.round(wingL / 0.85));
+        for (let k = 0; k <= nr; k++) { const x = s * CW + s * (k * wingL) / nr; B.tube('paint', iron, prof.map(([zz, yy]) => P3(x, GT + 0.14 + yy, zz)), 0.035, { radial: 4 }); }
+        B.tube('paint', iron, [P3(s * CW, GT + 0.14 + rise, 0), P3(s * hw, GT + 0.14 + rise, 0)], 0.05, { radial: 5 });
+        // the lunette at the wing's end: a half-disc of glass with radial bars, a ball finial on top
+        fpush(B, s * (hw + 0.02), GT + 0.12, 0, s * HP);
+        B.add('gloss', discGeo(1, 14, true), glass, 0, 0, 0.01, { sx: hd, sy: rise });
+        for (let k = 1; k < 6; k++) { const a = (k / 6) * PI; B.tube(NS('paint'), iron, [P3(0, 0, 0.03), P3(Math.cos(a) * hd, Math.sin(a) * rise, 0.03)], 0.02, { radial: 3 }); }
+        fpop(B);
+        B.sph('metal', K.gold, 0.09, s * (hw + 0.05), GT + 0.2 + rise + 0.1, 0, { ws: 8, hs: 6 });
+      }
+      // ---- the dome: drum, ribbed glass dome, lantern, finial
+      const DR = 2.75, DY = CT + 0.18;
+      B.cyl('paint', iron, DR + 0.1, 0.5, 0, DY + 0.25, 0, { seg: 24 });
+      B.lathe('gloss', glass, [[DR, 0], [DR * 0.97, 0.85], [DR * 0.86, 1.7], [DR * 0.66, 2.4], [DR * 0.38, 2.9], [0.5, 3.1], [0, 3.13]], 0, DY + 0.5, 0, { seg: 24 });
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * TAU, pts = [[DR + 0.03, 0], [DR * 0.99, 0.85], [DR * 0.88, 1.7], [DR * 0.68, 2.4], [DR * 0.4, 2.9], [0.53, 3.09]];
+        B.tube(k % 2 ? NS('paint') : 'paint', iron, pts.map(([r, y]) => P3(Math.cos(a) * r, DY + 0.5 + y, Math.sin(a) * r)), k % 2 ? 0.022 : 0.04, { radial: 4 });
+      }
+      for (const y of [0.95, 1.9]) B.tor(NS('paint'), iron, DR * (y < 1.5 ? 0.965 : 0.84), 0.025, 0, DY + 0.5 + y, 0, { rx: HP, rs: 3, ts: 28 });
+      const LY = DY + 0.5 + 3.09;
+      B.cyl('paint', iron, 0.62, 0.85, 0, LY + 0.42, 0, { seg: 10 });
+      B.cyl(NS('glow'), K.lamp, 0.55, 0.66, 0, LY + 0.42, 0, { seg: 10, glow: 0.75 });   // (the lantern lit: it glows at dusk)
+      for (let k = 0; k < 10; k++) { const a = (k / 10) * TAU; B.cyl(NS('paint'), iron, 0.03, 0.76, Math.cos(a) * 0.59, LY + 0.42, Math.sin(a) * 0.59, { seg: 4 }); }
+      B.lathe('paint', iron, [[0, 0], [0.78, 0], [0.46, 0.33], [0.11, 0.56], [0, 0.58]], 0, LY + 0.85, 0, { seg: 10 });
+      B.lathe('metal', K.gold, [[0, 0], [0.08, 0], [0.05, 0.4], [0.12, 0.5], [0, 0.7]], 0, LY + 1.4, 0, { seg: 8 });
+      B.flag(0, LY + 2.0, 0, { color: K.navy, s: 1.3 });
+      B.cyl('metal', K.ironDk, 0.02, 0.9, 0, LY + 1.9, 0, { seg: 4 });
+      // roof colliders (off limits): the wing vaults, the pavilion top, the dome + lantern
+      COL(B, -hw - 0.2, GT, -hd - 0.3, -CW, GT + rise + 0.2, hd + 0.3, { roof: true });
+      COL(B, CW, GT, -hd - 0.3, hw + 0.2, GT + rise + 0.2, hd + 0.3, { roof: true });
+      COL(B, -CW - 0.15, GT, -hd - 0.3, CW + 0.15, CT + 0.25, hd + 0.3, { roof: true });
+      COL(B, -DR, CT + 0.25, -DR, DR, LY + 1.3, DR, { roof: true });
+      // ---- the doors onto the terrace (pavilion front, closed: double glazed doors under a fanlight), end doors
+      fpush(B, 0, 0, hd + 0.08, 0);
+      for (const sx of [-1, 1]) { B.box('paint', K.ironDk, 0.9, 2.3, 0.06, sx * 0.47, TT + 1.15, 0.02, { r: 0.015 }); pbox(B, NS('gloss'), glassDk, 0.7, 1.9, 0.02, sx * 0.47, TT + 1.2, 0.06); pbox(B, NS('metal'), K.gold, 0.03, 0.2, 0.03, sx * 0.08, TT + 1.05, 0.07); }
+      B.add('paint', archPanelGeo(1.95, 0.02, 12), K.ironDk, 0, TT + 2.32, 0.03, {});
+      for (const sx of [-1, 1]) { pbox(B, 'gloss', K.ironDk, 0.06, 0.36, 0.22, sx * 1.4, TT + 2.35, 0.1); lantern(B, sx * 1.4, TT + 2.0, 0.3, 0.85); }
+      fpop(B);
+      for (const s of [-1, 1]) { fpush(B, s * (hw + 0.06), 0, 0, s * HP); B.box('paint', K.ironDk, 1.4, 2.1, 0.05, 0, WY + 1.05, 0.02, { r: 0.015 }); pbox(B, NS('gloss'), glassDk, 1.2, 1.7, 0.02, 0, WY + 1.1, 0.05); pbox(B, 'gloss', K.ironDk, 0.06, 0.36, 0.22, 0, WY + 2.5, 0.1); lantern(B, 0, WY + 2.15, 0.3, 0.8); fpop(B); }
+      // ---- the stove stack at the back (brick, off limits; west of centre, clear of Tower Command's south-walk leg)
+      const sx0 = -4.3;
+      B.box('paint', K.brick, 0.8, CT + 0.8, 0.6, sx0, (CT + 0.8) / 2, -hd - 0.33, { r: 0.03 });
+      pbox(B, 'paint', K.stone, 0.95, 0.15, 0.75, sx0, CT + 0.85, -hd - 0.33);
+      for (const dx of [-0.18, 0.18]) B.cyl('paint', K.pot, 0.09, 0.4, sx0 + dx, CT + 1.1, -hd - 0.33, { seg: 8 });
+      COL(B, sx0 - 0.4, 0, -hd - 0.63, sx0 + 0.4, CT + 0.95, -hd, { roof: true });
+      // ---- the terrace (in front, local z hd … hd + TD at TT): the stone balustrade between the two flights with urns,
+      //      its coping + a string course along the front, THE WINTER GARDENS on the front wall between the flights
+      const fz = hd + TD - 0.18;
+      fpush(B, -FX + 0.1, TT, fz, 0); balustrade(B, 2 * FX - 0.2, { col: false, urns: 1, urnC: K.coral, bay: 2.6 }); fpop(B);
+      fpush(B, 0, 0, hd + TD, 0);
+      pbox(B, 'paint', K.stoneDk, 2 * FX - 0.1, 0.14, 0.04, 0, 0.07, 0.02);
+      B.box('paint', K.navy, 5.6, 0.46, 0.04, 0, TT * 0.5, 0.02, { r: 0.015 });
+      pbox(B, 'paint', K.gold, 5.4, 0.02, 0.005, 0, TT * 0.5 + 0.19, 0.043);
+      pbox(B, 'paint', K.gold, 5.4, 0.02, 0.005, 0, TT * 0.5 - 0.19, 0.043);
+      letters(B, 'THE WINTER GARDENS · 1887', { h: 0.15, x: 0, y: TT * 0.5 - 0.075, z: 0.045, c: K.gold, flat: true, wt: 0.22, track: 0.12 });
+      fpop(B);
+      // the terrace's end walls: a stone band and quoins (the ends stay open: a hop, a squid climb)
+      for (const s of [-1, 1]) { fpush(B, s * hw, 0, hd + TD / 2, s * HP); pbox(B, 'paint', K.stoneDk, TD, 0.14, 0.04, 0, TT - 0.05, 0.02); quoins(B, -TD / 2 + 0.02, 0.1, TT - 0.1, -1); quoins(B, TD / 2 - 0.02, 0.1, TT - 0.1, 1); fpop(B); }
+      B.blob(W + 2, Dd + 2);
+    },
+  };
+
+  // ---- topiary: variant 0 a clipped yew cone in a white Versailles planter, 1 a box ball on a clean stem (a
+  //      "lollipop") in a planter, 2 a tiered yew (three clipped discs on a trunk) set straight in a bed. Collides (cover).
+  D.tidewater_topiary = {
+    desc: 'Clipped topiary: 0 yew cone in a white Versailles planter (2.2 m), 1 box ball on a stem in a planter (1.9 m), 2 three-tier yew in the ground (2.1 m). Collider = planter + foliage core (cover).',
+    params: { s: 'size (1)' }, variants: 3, mount: 'ground',
+    build(B, o) {
+      const v = (o.variant ?? 0) % 3, s = o.s ?? 1, yew = '#2f5a38', box = '#4d7d43';
+      let base = 0;
+      if (v < 2) {
+        const P = 0.72, PH = 0.62;
+        B.box('paint', K.white, P, PH, P, 0, PH / 2, 0, { r: 0.03 });
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) { B.box('paint', K.white, 0.1, PH + 0.12, 0.1, sx * P / 2, (PH + 0.12) / 2, sz * P / 2, { r: 0.02 }); B.sph('paint', K.white, 0.06, sx * P / 2, PH + 0.18, sz * P / 2, { ws: 6, hs: 4 }); }
+        for (const [ry, sz] of [[0, 1], [PI, -1], [HP, 1], [-HP, 1]]) { B.push(0, 0, 0, ry); for (let k = -1; k <= 1; k++) pbox(B, NS('paint'), shade(K.white, 0.9), 0.025, PH - 0.14, 0.01, k * 0.18, PH / 2, P / 2 + 0.005); B.pop(); }
+        pbox(B, 'paint', '#4a3a2c', P - 0.08, 0.02, P - 0.08, 0, PH - 0.02, 0);
+        base = PH;
+      }
+      if (v === 0) {
+        B.lathe('foliage', yew, [[0, 0], [0.5 * s, 0.05], [0.46 * s, 0.4 * s], [0.3 * s, 1.0 * s], [0.12 * s, 1.4 * s], [0, 1.55 * s]], 0, base, 0, { seg: 12 });
+        B.add('foliage', G_blob(0.2, 1, 4), shade(yew, 1.15), 0, base + 1.55 * s, 0, { s: 0.6 });
+        COL(B, -0.38, 0, -0.38, 0.38, base + 1.3 * s, 0.38);
+      } else if (v === 1) {
+        B.cyl('wood', '#6b5540', 0.045, 0.7 * s, 0, base + 0.35 * s, 0, { seg: 6 });
+        B.add('foliage', G_blob(0.52 * s, 1, 7), box, 0, base + 0.7 * s + 0.45 * s, 0, {});
+        COL(B, -0.38, 0, -0.38, 0.38, base + 0.3, 0.38);
+        COL(B, -0.42 * s, base + 0.72 * s, -0.42 * s, 0.42 * s, base + 1.5 * s, 0.42 * s);
+      } else {
+        B.cyl('wood', '#6b5540', 0.07, 1.9 * s, 0, 0.95 * s, 0, { seg: 6 });
+        for (const [y, r] of [[0.35, 0.62], [1.05, 0.46], [1.65, 0.3]]) B.lathe('foliage', yew, [[0, y * s - 0.2], [r * s, y * s - 0.15], [r * s, y * s + 0.12], [0, y * s + 0.2]], 0, 0, 0, { seg: 12 });
+        B.add('foliage', G_blob(0.16, 1, 5), yew, 0, 2.0 * s, 0, {});
+        COL(B, -0.5 * s, 0, -0.5 * s, 0.5 * s, 1.35 * s, 0.5 * s);
+      }
+      B.blob(1.2, 1.2);
+    },
+  };
+
+  // ---- tub palm: a white Versailles tub with a Chusan fan palm (shaggy trunk, fans of pleated leaves)
+  D.tidewater_palmtub = {
+    desc: 'Chusan fan palm in a white Versailles tub (0.9 m tub, 2.6 m palm): hooped planks, finials, a shaggy trunk and a crown of pleated fan leaves on long stalks. Tub collides (cover).',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      const P = 0.9, PH = 0.82;
+      B.box('paint', K.white, P, PH, P, 0, PH / 2, 0, { r: 0.03 });
+      for (const y of [0.18, PH - 0.16]) pbox(B, NS('metal'), K.ironDk, P + 0.02, 0.05, P + 0.02, 0, y, 0);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) { B.box('paint', K.white, 0.12, PH + 0.16, 0.12, sx * P / 2, (PH + 0.16) / 2, sz * P / 2, { r: 0.02 }); B.sph('paint', K.gold, 0.06, sx * P / 2, PH + 0.22, sz * P / 2, { ws: 6, hs: 4 }); }
+      pbox(B, 'paint', '#4a3a2c', P - 0.1, 0.02, P - 0.1, 0, PH - 0.02, 0);
+      B.tube('wood', '#6d5a45', [P3(0, PH, 0), P3(0.04, PH + 0.9, 0.02), P3(0.02, PH + 1.7, -0.02)], (t) => 0.13 - 0.03 * t, { radial: 7 });
+      // the crown: fans of pleated leaflets on short stalks, the young ones held up, the old ones drooping
+      for (let k = 0; k < 13; k++) {
+        const a = (k / 13) * TAU * 1.0 + (k % 2) * 0.2, up = k < 4 ? 0.9 : k < 9 ? 0.35 : -0.25, top = PH + 1.72, L = 0.42;
+        const sx = Math.cos(a) * Math.cos(up), sy = Math.sin(up), sz = Math.sin(a) * Math.cos(up);
+        const hx = sx * L, hy = top + sy * L, hz = sz * L;
+        B.tube(NS('wood'), '#7d8a4a', [P3(0, top, 0), P3(hx, hy, hz)], 0.014, { radial: 3 });
+        B.push(hx, hy, hz, -a + HP, -up);
+        for (let f = -5; f <= 5; f++) { B.push(0, 0, 0, f * 0.15, 0.04 * Math.abs(f), 0); pbox(B, 'foliage', f % 2 ? K.leaf : K.leafLt, 0.09, 0.012, 0.55, 0, 0, 0.27); B.pop(); }
+        B.pop();
+      }
+      COL(B, -P / 2, 0, -P / 2, P / 2, PH + 0.2, P / 2);
+      B.blob(1.3, 1.3);
+    },
+  };
+
+  // ---- the drinking fountain: a Victorian cast-iron canopy on four columns over a pedestal with lion-mask spouts and
+  //      basins, chained cups, a scalloped ogee canopy with a crown; the pedestal collides (cover)
+  D.tidewater_drinkfountain = {
+    desc: 'Cast-iron drinking fountain (3.9 m): octagonal granite step, a pedestal with four basins + lion-mask spouts + chained cups, four twisted columns carrying a pierced ogee canopy with a crest and a gilt crown finial, a bronze plaque. Pedestal + columns collide.',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      const c = K.iron, R = 1.1, TOP = 2.9;
+      B.lathe('paint', K.granite, [[0, 0], [1.35, 0], [1.35, 0.14], [1.2, 0.18], [0, 0.18]], 0, 0, 0, { seg: 8, ry: PI / 8 });
+      B.lathe('gloss', c, [[0, 0.18], [0.5, 0.18], [0.5, 0.3], [0.36, 0.4], [0.3, 0.9], [0.4, 1.0], [0.4, 1.1], [0.2, 1.3], [0.16, 1.9], [0.24, 2.0], [0, 2.02]], 0, 0, 0, { seg: 8 });
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * TAU;
+        B.push(Math.cos(a) * 0.42, 0.9, Math.sin(a) * 0.42, -a + HP);
+        B.lathe('gloss', c, [[0, 0], [0.22, 0.02], [0.25, 0.14], [0, 0.14]], 0, 0, 0.12, { seg: 10 });
+        pbox(B, NS('paint'), K.water, 0.36, 0.01, 0.2, 0, 0.13, 0.14);
+        B.sph('metal', K.gold, 0.07, 0, 0.42, -0.02, { ws: 8, hs: 6 });
+        B.cyl('metal', K.gold, 0.012, 0.12, 0, 0.36, 0.05, { rx: HP, seg: 4 });
+        B.tube(NS('metal'), K.ironDk, [P3(0.14, 0.3, 0.02), P3(0.18, 0.05, 0.1), P3(0.2, -0.05, 0.16)], 0.006, { radial: 3 });
+        B.cyl('metal', K.lead, 0.04, 0.09, 0.2, -0.1, 0.16, { seg: 6 });
+        B.pop();
+      }
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * TAU + PI / 4, x = Math.cos(a) * R, z = Math.sin(a) * R, pts = [];
+        for (let i = 0; i <= 12; i++) { const t = i / 12; pts.push(P3(x + Math.cos(t * 9) * 0.03, 0.18 + t * (TOP - 0.18), z + Math.sin(t * 9) * 0.03)); }
+        B.tube('gloss', c, pts, 0.045, { radial: 5 });
+        B.lathe('gloss', c, [[0, 0], [0.09, 0], [0.09, 0.14], [0.05, 0.2], [0, 0.2]], x, 0.18, z, { seg: 6 });
+        B.lathe('gloss', c, [[0.05, 0], [0.12, 0.1], [0.12, 0.16], [0, 0.16]], x, TOP - 0.12, z, { seg: 6 });
+        COL(B, x - 0.08, 0, z - 0.08, x + 0.08, TOP, z + 0.08, { roof: true });
+      }
+      B.lathe('gloss', c, [[R * 1.35, 0], [R * 1.35, 0.14], [R * 1.1, 0.3], [R * 0.7, 0.62], [R * 0.4, 0.95], [R * 0.3, 1.1], [0, 1.12]], 0, TOP, 0, { seg: 16 });
+      for (let k = 0; k < 16; k++) { const a = (k / 16) * TAU; B.tor(NS('gloss'), c, 0.1, 0.012, Math.cos(a) * R * 1.35, TOP - 0.05, Math.sin(a) * R * 1.35, { ry: -a, rs: 3, ts: 8, arc: PI, rz: PI }); }
+      B.lathe('metal', K.gold, [[0, 0], [0.14, 0], [0.18, 0.1], [0.1, 0.2], [0.14, 0.3], [0, 0.42]], 0, TOP + 1.1, 0, { seg: 8 });
+      pbox(B, 'metal', K.bronze, 0.3, 0.2, 0.02, 0, 1.55, 0.2, { rx: -0.1 });
+      COL(B, -0.5, 0, -0.5, 0.5, 2.0, 0.5, { roof: true });
+      COL(B, -R * 1.35, TOP, -R * 1.35, R * 1.35, TOP + 1.5, R * 1.35, { roof: true });
+      B.blob(2.6, 2.6);
+    },
+  };
+
+  // ---- the coxswain's statue: a bronze lifeboatman in oilskins and sou'wester holding up a storm lantern, on a
+  //      granite pedestal with a plaque and a wreath (pedestal collides, off limits)
+  D.tidewater_statue = {
+    desc: 'Statue of Coxswain Hartley (2.0 m bronze figure: oilskin coat, sou\'wester, sea boots, a raised storm lantern, a coil of rope at his feet) on a 1.6 m granite pedestal with a bronze plaque and a laurel wreath. Pedestal collides (off limits).',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      const bz = '#5d6a5a', bzDk = '#46503f', PY = 1.6;
+      B.box('paint', K.granite, 1.5, 0.3, 1.5, 0, 0.15, 0, { r: 0.03 });
+      B.box('paint', K.granite, 1.2, PY - 0.5, 1.2, 0, 0.3 + (PY - 0.5) / 2, 0, { r: 0.03 });
+      B.box('paint', K.granite, 1.35, 0.2, 1.35, 0, PY - 0.1, 0, { r: 0.03 });
+      pbox(B, 'metal', K.bronze, 0.7, 0.45, 0.02, 0, 0.95, 0.605);
+      letters(B, 'HARTLEY', { h: 0.08, x: 0, y: 1.02, z: 0.618, c: '#f0d9a0', flat: true, wt: 0.22, track: 0.1, mat: 'metal' });
+      letters(B, 'COXSWAIN 1861-1904', { h: 0.045, x: 0, y: 0.88, z: 0.618, c: '#f0d9a0', flat: true, wt: 0.24, track: 0.08, mat: 'metal' });
+      B.tor('foliage', K.leafDk, 0.22, 0.05, 0, 0.7, 0.64, { rs: 5, ts: 14 });
+      // the figure (faces +Z): boots, coat (a flared lathe), arms, head + sou'wester, lantern held up in the right hand
+      const y = PY;
+      for (const sx of [-0.14, 0.14]) B.lathe('metal', bzDk, [[0, 0], [0.11, 0], [0.1, 0.45], [0, 0.46]], sx, y, 0, { seg: 8 });
+      B.lathe('metal', bz, [[0, 0.35], [0.36, 0.38], [0.3, 0.8], [0.26, 1.25], [0.2, 1.42], [0, 1.44]], 0, y, 0, { seg: 10 });
+      B.sph('metal', bz, 0.14, 0, y + 1.6, 0.02, { ws: 10, hs: 8 });
+      B.lathe('metal', bzDk, [[0, 0], [0.3, 0.02], [0.26, 0.06], [0.14, 0.1], [0.12, 0.22], [0, 0.24]], 0, y + 1.62, 0, { seg: 12, rx: -0.12 });
+      B.tube('metal', bz, [P3(-0.24, y + 1.3, 0), P3(-0.3, y + 0.95, 0.1), P3(-0.22, y + 0.75, 0.2)], 0.07, { radial: 6 });
+      B.tube('metal', bz, [P3(0.24, y + 1.3, 0), P3(0.38, y + 1.55, 0.12), P3(0.32, y + 1.95, 0.2)], 0.07, { radial: 6 });
+      B.lathe('metal', bzDk, [[0, 0], [0.09, 0], [0.1, 0.2], [0.06, 0.28], [0, 0.3]], 0.32, y + 1.72, 0.22, { seg: 8 });
+      B.tor('metal', bzDk, 0.18, 0.04, -0.1, y + 0.08, 0.3, { rx: HP, rs: 4, ts: 12 });
+      COL(B, -0.62, 0, -0.62, 0.62, PY + 1.9, 0.62, { roof: true });
+      B.blob(1.8, 1.8);
+    },
+  };
+
+  // ---- carpet bed dressing on a stone-kerbed garden bed (pos = bed centre at its top): massed bedding in bands and
+  //      a scroll, box edging along the kerb, standard roses at the corners (no collider; the topiary set on it is)
+  D.tidewater_carpetbed = {
+    desc: 'Carpet bedding on a kerbed bed top (pos = bed centre at the top, w × d): box edging inside the kerb, bands of bedding (coral, cream, violet, gold), a sinuous scroll of dark foliage, standard roses at the corners, a little enamel CARPET BED 1887 plate. Non-colliding.',
+    params: { w: 'm', d: 'm', seed: 'n' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const w = o.w ?? 6, d = o.d ?? 4, sd = o.seed ?? 3;
+      for (const s of [-1, 1]) { B.box('foliage', K.leafDk, w - 0.6, 0.22, 0.24, 0, 0.11, s * (d / 2 - 0.4), { r: 0.08 }); B.box('foliage', K.leafDk, 0.24, 0.22, d - 0.6, s * (w / 2 - 0.4), 0.11, 0, { r: 0.08 }); }
+      flowerBed(B, w - 1.1, d - 1.1, 0.0, 11 + sd, ['#e3715e', '#f3ecd8', '#9a6ac2', '#e7d24a', '#e3715e', '#f3ecd8']);
+      const pts = []; for (let i = 0; i <= 16; i++) { const t = i / 16; pts.push(P3((t - 0.5) * (w - 1.4), 0.08, Math.sin(t * TAU * 1.5 + sd) * (d / 2 - 0.9))); }
+      B.tube('foliage', '#5a2f45', pts, 0.12, { radial: 5 });
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const x = sx * (w / 2 - 0.45), z = sz * (d / 2 - 0.45);
+        B.cyl('wood', '#6b5540', 0.03, 1.0, x, 0.5, z, { seg: 5 });
+        B.add('foliage', G_blob(0.26, 1, 6), K.leaf, x, 1.1, z, {});
+        for (let k = 0; k < 5; k++) { const a = (k / 5) * TAU; B.sph(NS('paint'), sx * sz > 0 ? '#e25577' : '#f3ecd8', 0.05, x + Math.cos(a) * 0.2, 1.15 + (k % 2) * 0.06, z + Math.sin(a) * 0.2, { ws: 5, hs: 3 }); }
+      }
+    },
+  };
+
+  // ---- seat shelter: a lean-to seaside shelter with its back to the garden (glazed screen over a stucco wall) and a
+  //      long bench facing the sea under a slate lean-to roof on iron brackets; wall + roof collide
+  D.tidewater_seatshelter = {
+    desc: 'Lean-to promenade seat shelter (L long along X, faces +Z): a 1.15 m stucco back wall with a white-framed glazed screen over it, end screens, a long slatted bench, iron brackets carrying a slate lean-to roof with a coral fretwork fascia and finials. Wall + roof collide (roof off limits).',
+    params: { length: 'm (4.2)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const L = o.length ?? 4.2, WH = 1.15, TOP = 2.6, D = 1.7;
+      B.box('paint', K.mint, L, WH, 0.3, 0, WH / 2, -D / 2 + 0.15, { r: 0.03 });
+      pbox(B, 'paint', K.trim, L + 0.06, 0.08, 0.38, 0, WH + 0.04, -D / 2 + 0.15);
+      pbox(B, NS('gloss'), '#9fc6cf', L - 0.1, TOP - WH - 0.1, 0.03, 0, (WH + TOP) / 2, -D / 2 + 0.15);
+      for (let i = 0; i <= 5; i++) pbox(B, 'paint', K.white, 0.07, TOP - WH, 0.08, -L / 2 + 0.05 + (i * (L - 0.1)) / 5, (WH + TOP) / 2, -D / 2 + 0.15);
+      for (const sx of [-1, 1]) {
+        B.box('paint', K.mint, 0.3, WH, D - 0.3, sx * (L / 2 - 0.15), WH / 2, 0, { r: 0.03 });
+        pbox(B, NS('gloss'), '#9fc6cf', 0.03, TOP - WH - 0.1, D - 0.4, sx * (L / 2 - 0.15), (WH + TOP) / 2, 0);
+        B.lathe('gloss', K.iron, [[0, 0], [0.08, 0], [0.08, 0.1], [0.05, 0.16], [0.04, TOP - 0.2], [0.08, TOP], [0, TOP]], sx * (L / 2 - 0.15), 0, D / 2 - 0.15, { seg: 8 });
+        COL(B, sx * (L / 2 - 0.15) - 0.1, 0, D / 2 - 0.25, sx * (L / 2 - 0.15) + 0.1, TOP, D / 2 - 0.05, { roof: true });
+      }
+      for (let i = 0; i < 3; i++) B.box('wood', shade(K.woodLt, 0.95 + i * 0.04), L - 0.8, 0.035, 0.09, 0, 0.46, -D / 2 + 0.55 + i * 0.1, { r: 0.01 });
+      for (let i = 0; i < 2; i++) B.box('wood', K.woodLt, L - 0.8, 0.09, 0.035, 0, 0.62 + i * 0.16, -D / 2 + 0.36, { r: 0.01 });
+      // lean-to roof: slate slab falling toward the sea, fascia + fretwork, finials
+      B.push(0, TOP + 0.35, 0, 0, -0.22); B.box('paint', K.slate, L + 0.5, 0.12, D + 0.5, 0, 0, 0, { r: 0.03 }); B.pop();
+      pbox(B, 'paint', K.trim, L + 0.5, 0.18, 0.06, 0, TOP + 0.06, D / 2 + 0.26);
+      for (let x = -L / 2 - 0.2; x <= L / 2 + 0.21; x += 0.2) pbox(B, NS('paint'), K.coral, 0.12, 0.16, 0.025, x, TOP - 0.06, D / 2 + 0.3);
+      for (const sx of [-1, 1]) B.sph('metal', K.gold, 0.07, sx * (L / 2 + 0.2), TOP + 0.62, -D / 2 - 0.1, { ws: 6, hs: 4 });
+      COL(B, -L / 2, 0, -D / 2, L / 2, WH, -D / 2 + 0.3);
+      COL(B, -L / 2 - 0.25, TOP - 0.1, -D / 2 - 0.25, L / 2 + 0.25, TOP + 0.8, D / 2 + 0.3, { roof: true });
+      COL(B, -L / 2 + 0.4, 0, -D / 2 + 0.3, L / 2 - 0.4, 0.5, -D / 2 + 0.8);
+      B.blob(L + 0.6, D + 0.6);
+    },
+  };
+
   for (const k of Object.keys(D)) if (k.startsWith('tidewater_')) def(D[k]);
 }
 
 // ------------------------------------------------------------------------------------------ placements
 // Alpha's half (mirrored automatically unless mirror:false). Curve-following dressing is generated from the layout's
 // geometry (PROM crescent, TERR ring, COLO sections) so railings, lamps and benches sit exactly on the curves.
-const D2R = Math.PI / 180;
+const D2R = Math.PI / 180, HPI = Math.PI / 2;
 const polar = (c, r, a) => [c[0] + r * Math.cos(a * D2R), c[1] + r * Math.sin(a * D2R)];
 const runRot = (p, q) => Math.atan2(-(q[1] - p[1]), q[0] - p[0]);          // rotY so local +X runs from p to q
 const faceRot = (dx, dz) => Math.atan2(dx, dz);                              // rotY so local +Z faces (dx, dz)
@@ -1952,8 +2379,8 @@ const out = [];
     const p = polar(c, rR, a0 + i * da), q = polar(c, rR, a0 + (i + 1) * da);
     out.push({ type: 'tidewater_searail', pos: [p[0], 0, p[1]], rotY: runRot(p, q), length: dist(p, q), col: false, p1: i === n - 1 });
   }
-  const tip = polar(c, rR, a1);
-  out.push({ type: 'tidewater_searail', pos: [tip[0], 0, tip[1]], rotY: runRot(tip, [-9.55, -38.28]), length: dist(tip, [-9.55, -38.28]), col: false, p0: false });
+  const tip = polar(c, rR, a1), hall = [-9.55, tq(-38.28)];
+  out.push({ type: 'tidewater_searail', pos: [tip[0], 0, tip[1]], rotY: runRot(tip, hall), length: dist(tip, hall), col: false, p0: false });
   const lamps = [186, 198, 210, 222].map((a) => polar(c, PROM.rOut - 0.65, a));
   lamps.forEach((p, k) => {
     const a = [186, 198, 210, 222][k] * D2R;
@@ -1983,111 +2410,221 @@ const out = [];
 }
 // ---- the Crescent's terrace walk: café tables, benches against the frontage, a viewer at the open end
 {
-  const tbl = [[0, 2.6, 0.5], [1, 2.6, 0.3], [1, 2.6, 0.72], [2, 2.7, 0.62]];
+  const tbl = [[0, 2.6, 0.5], [1, 2.6, 0.3], [1, 2.6, 0.72], [2, 2.6, 0.16], [2, 2.6, 0.84], [3, 2.7, 0.62]];
   tbl.forEach(([i, x, t], k) => { const p = onSec(i, x, SECT[i].len * t); out.push({ type: 'tidewater_cafe', pos: [p[0], COLO.deckTop, p[1]], variant: k % 2 }); });
-  for (const [i, t] of [[0, 0.22], [1, 0.5], [2, 0.3]]) { const s = SECT[i], p = onSec(i, COLO.deck - 0.35, s.len * t); out.push({ type: 'tidewater_bench', pos: [p[0], COLO.deckTop, p[1]], rotY: faceRot(-s.n[0], -s.n[1]), segCol: 3 }); }
-  { const p = onSec(2, 1.2, SECT[2].len - 0.9); out.push({ type: 'tidewater_telescope', pos: [p[0], COLO.deckTop, p[1]], rotY: 0.2 }); }
+  for (const [i, t] of [[0, 0.22], [1, 0.5], [2, 0.3], [2, 0.7], [3, 0.3]]) { const s = SECT[i], p = onSec(i, COLO.deck - 0.35, s.len * t); out.push({ type: 'tidewater_bench', pos: [p[0], COLO.deckTop, p[1]], rotY: faceRot(-s.n[0], -s.n[1]), segCol: 3 }); }
+  { const p = onSec(3, 1.2, SECT[3].len - 0.9); out.push({ type: 'tidewater_telescope', pos: [p[0], COLO.deckTop, p[1]], rotY: 0.2 }); }
+  // (the Assembly Rooms' stretch: planted urns either side of their landing's opening)
+  for (const z of [STAIR_AR.top - 0.5, STAIR_AR.landing + 0.5]) out.push({ type: 'tidewater_urn', pos: [COLO.front[3][0] - COLO.deck + 0.55, COLO.deckTop, z], color: '#9a6ac2' });
   { const s = SECT[1], p = onSec(1, 0.08, s.len * 0.4); out.push({ type: 'tidewater_gull', pos: [p[0], COLO.deckTop + 1.03, p[1]], rotY: 1.9, variant: 1 }); }
 }
 const SQL = (x, z, o) => ({ pos: [x, SQ, z], ...o });
+// ---- the Winter Gardens (layout.js GARDEN; the Long Stages stretch). Tower Command runs its track through the garden
+//      (tower-data.js: the north walk z -18, the esplanade x -23.3 and back, along the terrace z -24.3, a jog up the east
+//      walk x 13.2 / 16.0, the south walk z -33.7): the cover standing on it is Turf War / Zone Control only (notIn 'tower').
+{
+  const G = GARDEN, T = G.terrace, pz = (G.palm[2] + G.palm[3]) / 2, NT = { notIn: 'tower' }, FW = G.flights[1][3];
+  const FX = G.flights[1][0] - FW / 2;   // the flights' inner edge |x|
+  out.push({ type: 'tidewater_palmhouse', pos: [0, SQ, pz], rotY: 0, w: G.palm[1] - G.palm[0], d: G.palm[3] - G.palm[2], plinth: G.plinth - SQ, glass: G.glass - SQ,
+    td: T[3] - T[2], tt: G.top - SQ, fx: FX });
+  // the terrace's two flights: stone balustrades down both sides
+  for (const [x, zt, zf, w] of G.flights) {
+    out.push({ type: 'tidewater_rampbal', pos: [x - w / 2 - 0.12, SQ, zt], rotY: -P / 2, length: zf - zt, ya: G.top - SQ, yb: 0, skirtZ: 0.11 });
+    out.push({ type: 'tidewater_rampbal', pos: [x + w / 2 + 0.12, SQ, zf], rotY: P / 2, length: zf - zt, ya: 0, yb: G.top - SQ, skirtZ: 0.11 });
+  }
+  // the beds: carpet bedding, tiered yews at their corners (the cover), a cone at the terrace's bed's centre
+  G.beds.forEach((b, i) => {
+    const cx = (b[0] + b[1]) / 2, cz = (b[2] + b[3]) / 2, w = b[1] - b[0], d = b[3] - b[2];
+    out.push({ type: 'tidewater_carpetbed', pos: [cx, G.bedTop, cz], w, d, seed: i * 3 });
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) out.push({ type: 'tidewater_topiary', pos: [cx + sx * (w / 2 - 0.75), G.bedTop, cz + sz * (d / 2 - 0.75)], variant: 2, s: i === 0 ? 0.85 : 1.05 });
+    if (i === 0) out.push({ type: 'tidewater_topiary', pos: [cx, G.bedTop, cz], variant: 1, s: 1.0 });
+  });
+  // the terrace: tub palms at its front corners behind the flights' heads, a bench either side of the doors (Turf War /
+  // Zone Control: the track runs along the terrace in Tower Command)
+  for (const sx of [-1, 1]) {
+    out.push({ type: 'tidewater_palmtub', pos: [sx * (T[1] - 0.7), G.top, T[2] + 0.75], ...NT });
+    out.push({ type: 'tidewater_bench', pos: [sx * 2.2, G.top, T[2] + 0.5], rotY: 0, ...NT });
+  }
+  // tub palms at the side beds' inner corners, beside the walks along the Palm House
+  for (const sx of [-1, 1]) out.push({ type: 'tidewater_palmtub', pos: [sx * 10.1, SQ, -34.2], ...(sx > 0 ? NT : {}) });
+  // the west walk: the drinking fountain, lamps, a bench; the coxswain's statue at the south walk's west end
+  out.push({ type: 'tidewater_drinkfountain', ...SQL(-13.2, -21.2) });
+  out.push({ type: 'tidewater_statue', ...SQL(-12.4, -35.0), rotY: P * 0.15 });
+  out.push({ type: 'tidewater_lamp', ...SQL(-9.4, -26.8), variant: 0, baskets: true });
+  out.push({ type: 'tidewater_lamp', ...SQL(-18.1, -20.6), variant: 0 });
+  out.push({ type: 'tidewater_bench', ...SQL(-16.9, -31.4), rotY: P / 2 });
+  // the north walk (from the mid square into the garden): clipped cones in planters (the west ones stand on the track's
+  // leg in Tower Command), a lollipop pair either side of the terrace's bed
+  for (const x of [-14.3, -8.4]) out.push({ type: 'tidewater_topiary', ...SQL(x, -18.4), variant: 0, ...NT });
+  for (const x of [8.0, 12.6]) out.push({ type: 'tidewater_topiary', ...SQL(x, -18.4), variant: 0 });
+  // the east walk: a fingerpost, a lamp, cones along the Assembly Rooms' colonnade (on the track's east leg: not in
+  // Tower Command), a bench facing the Palm House
+  out.push({ type: 'tidewater_fingerpost', ...SQL(18.5, -24.6), arms: [['PALM HOUSE', -90], ['ASSEMBLY ROOMS', 10], ['PROMENADE', 180], ['TOWN HALL', -120]] });
+  out.push({ type: 'tidewater_lamp', ...SQL(18.6, -20.8), variant: 0 });
+  out.push({ type: 'tidewater_urn', ...SQL(16.9, STAIR_AR.foot - 1.1), color: '#9a6ac2' });   // (by the Assembly Rooms' stair foot)
+  for (const z of [-26.2, -32.4]) out.push({ type: 'tidewater_topiary', ...SQL(16.0, z), variant: 1, ...NT });
+  out.push({ type: 'tidewater_bench', ...SQL(15.9, -30.0), rotY: -P / 2, ...NT });
+  out.push({ type: 'tidewater_lamp', ...SQL(9.4, -26.8), variant: 0, baskets: true });
+  // the south walk: a bench pair facing the bandstand, lamps, cones
+  out.push({ type: 'tidewater_bench', ...SQL(-4.8, -34.9), rotY: P, ...NT });
+  out.push({ type: 'tidewater_bench', ...SQL(4.8, -34.9), rotY: P, ...NT });
+  out.push({ type: 'tidewater_lamp', ...SQL(-6.9, -33.0), variant: 0 });
+  out.push({ type: 'tidewater_lamp', ...SQL(6.9, -33.0), variant: 0, ...NT });
+  out.push({ type: 'tidewater_topiary', ...SQL(-8.4, -35.6), variant: 0 });
+  out.push({ type: 'tidewater_topiary', ...SQL(10.8, -34.6), variant: 0, ...NT });
+  // Tower Command cover in the garden (off the track): inflatables by the walks
+  out.push({ type: 'inflatable', size: 'small', ...SQL(-8.6, -20.6), onlyIn: 'tower' });
+  out.push({ type: 'inflatable', size: 'small', ...SQL(6.2, -36.1), onlyIn: 'tower' });
+}
+// ---- the esplanade (layout ESPL: the promenade's straight run from the pier forecourt to the crescent): its sea railing,
+//      basket lamps with bunting, benches + a telescope facing the bay, a lifebuoy, a bin, the seat shelter backing onto
+//      the Winter Gardens (the track's leg runs down its middle in Tower Command: all of this stands clear of it)
+{
+  const xs = ESPL.x[0] + 0.16, z0 = PROM.c[1] - 1.52;
+  out.push({ type: 'tidewater_searail', pos: [xs, 0, z0], rotY: -P / 2, length: -5.5 - z0, col: false, p1: false });
+  const lz = [-8.6, -16.0], lx = ESPL.x[0] + 0.65;   // (the crescent's first lamp stands at -27.9)
+  lz.forEach((z, k) => {
+    out.push({ type: 'tidewater_lamp', pos: [lx, 0, z], variant: 1, rotY: HPI, baskets: true });
+    if (k < lz.length - 1) out.push({ type: 'bunting', pos: [lx, 0, z], rotY: P / 2, length: z - lz[k + 1], height: 3.55, posts: false });
+  });
+  for (const z of [-13.2, -22.0]) out.push({ type: 'tidewater_bench', pos: [ESPL.x[0] + 1.3, 0, z], rotY: -P / 2, segCol: 3 });
+  out.push({ type: 'tidewater_telescope', pos: [ESPL.x[0] + 0.72, 0, -19.8], rotY: -P / 2 });
+  out.push({ type: 'lifering', pos: [ESPL.x[0] + 0.45, 0, -11.0], rotY: P / 2 });
+  out.push({ type: 'trashbin', pos: [ESPL.x[0] + 0.8, 0, -18.0], color: '#2f5d55' });
+  out.push({ type: 'tidewater_seatshelter', pos: [ESPL.x[1] - 0.95, 0, -23.0], rotY: -P / 2, length: 4.2 });
+  out.push({ type: 'deckchair', pos: [ESPL.x[0] + 2.4, 0, -25.4], rotY: -P / 2 + 0.2, variant: 1, notIn: 'tower' });
+  out.push({ type: 'tidewater_gull', pos: [xs, 1.07, -14.1], rotY: -1.2 });
+}
+// Tower Command's bandstand steps: foot → top (z, Alpha's half)
+const BSTEP = [TW.band.stepFoot, TW.band.z + 3.8 * Math.cos(Math.PI / 8)];
 export const PLACEMENTS = [
   // ---- the clock tower (single, self-symmetric) on its dais
-  { type: 'tidewater_clocktower', pos: [0, TERR.daisTop, 0], rotY: 0, top: 12.5 - TERR.daisTop, mirror: false },
+  { type: 'tidewater_clocktower', pos: [0, TERR.daisTop, 0], rotY: 0, top: 12.5 - TERR.daisTop, mirror: false, notIn: 'tower' },
+  { type: 'tidewater_clocktower', pos: [0, TERR.daisTop, 0], rotY: 0, top: 12.5 - TERR.daisTop, open: true, mirror: false, onlyIn: 'tower' },
   // ---- Town Hall (Alpha's end) + Custom House (Bravo's end): same massing, own names; their ground storeys
-  { type: 'tidewater_townhall', pos: [0, 0, -45.4], rotY: 0, variant: 0, mirror: false },
-  { type: 'tidewater_townhall', pos: [0, 0, 45.4], rotY: P, variant: 1, mirror: false },
-  { type: 'tidewater_townhallbase', pos: [0, SQ, 0], rotY: 0, variant: 0, mirror: false },
-  { type: 'tidewater_townhallbase', pos: [0, SQ, 0], rotY: P, variant: 1, mirror: false },
+  { type: 'tidewater_townhall', pos: [0, 0, tq(-45.4)], rotY: 0, variant: 0, mirror: false },
+  { type: 'tidewater_townhall', pos: [0, 0, -tq(-45.4)], rotY: P, variant: 1, mirror: false },
+  { type: 'tidewater_townhallbase', pos: [0, SQ, -TD], rotY: 0, variant: 0, mirror: false },   // (built in the first build's coordinates: moved out whole)
+  { type: 'tidewater_townhallbase', pos: [0, SQ, TD], rotY: P, variant: 1, mirror: false },
   // ---- the Crescent (colonnade + frontage follow the layout's sections)
-  { type: 'tidewater_colonnade', pos: [0, 0, 0] },
+  { type: 'tidewater_colonnade', pos: [0, 0, 0], notIn: 'tower' },
+  { type: 'tidewater_colonnade', pos: [0, 0, 0], rev: true, onlyIn: 'tower' },
   { type: 'tidewater_arcadefront', pos: [0, 0, 0] },
   // ---- the lifeboat station out on its jetty off the promenade's tip, the two piers (named apart: mirror:false)
-  { type: 'tidewater_lifeboat', pos: [-19.6, 0, -41.2], rotY: P / 4 },
+  { type: 'tidewater_lifeboat', pos: [-19.6, 0, tq(-41.2)], rotY: P / 4 },
   { type: 'tidewater_pier', pos: [-27, 0, 0], rotY: 0, variant: 0, mirror: false },
   { type: 'tidewater_pier', pos: [27, 0, 0], rotY: P, variant: 1, mirror: false },
   // ---- spawn loggia: balcony balustrade (open in the middle: the front drop), over the flights, the wing, the sea side
-  { type: 'tidewater_balustrade', pos: [-4.65, 2.4, -36.2], length: 2.45, lamp1: true },
-  { type: 'tidewater_balustrade', pos: [2.2, 2.4, -36.2], length: 2.45, lamp0: true },
-  { type: 'tidewater_balustrade', pos: [-9.35, 2.4, -38.58], length: 4.5, urns: 1 },
-  { type: 'tidewater_balustrade', pos: [4.85, 2.4, -38.58], length: 4.5, urns: 1 },
-  { type: 'tidewater_balustrade', pos: [9.68, 2.4, -41.62], length: 4.42, p0: false, urns: 1 },
-  { type: 'tidewater_balustrade', pos: [9.68, 2.4, -41.5], rotY: -P / 2, length: 3.0, p0: false },
-  { type: 'tidewater_balustrade', pos: [-9.33, 2.4, -45.25], rotY: -P / 2, length: 6.85, col: false, urns: 2 },
+  { type: 'tidewater_balustrade', pos: [-4.65, 2.4, tq(-36.2)], length: 2.45, lamp1: true },
+  { type: 'tidewater_balustrade', pos: [2.2, 2.4, tq(-36.2)], length: 2.45, lamp0: true },
+  { type: 'tidewater_balustrade', pos: [-9.35, 2.4, tq(-38.58)], length: 4.5, urns: 1 },
+  { type: 'tidewater_balustrade', pos: [4.85, 2.4, tq(-38.58)], length: 4.5, urns: 1 },
+  { type: 'tidewater_balustrade', pos: [9.68, 2.4, tq(-41.62)], length: 4.42, p0: false, urns: 1 },
+  { type: 'tidewater_balustrade', pos: [9.68, 2.4, tq(-41.5)], rotY: -P / 2, length: 3.0, p0: false },
+  { type: 'tidewater_balustrade', pos: [-9.33, 2.4, tq(-45.25)], rotY: -P / 2, length: 6.85, col: false, urns: 2 },
   // ---- stair balustrades + skirts: the spawn flights, the terrace flights, the bandstand steps, the Crescent's stairs
-  { type: 'tidewater_rampbal', pos: [-10.8, SQ, -35.9], rotY: 0, length: 6, ya: 0, yb: 2.6, skirtZ: 0.09 },
-  { type: 'tidewater_rampbal', pos: [4.8, SQ, -35.9], rotY: 0, length: 6, ya: 2.6, yb: 0, skirtZ: 0.09 },
-  { type: 'tidewater_rampbal', pos: [-2.12, SQ, -12.4], rotY: -P / 2, length: 4.4, ya: 0, yb: 1.2, skirtZ: 0.11 },
-  { type: 'tidewater_rampbal', pos: [2.12, SQ, -8.0], rotY: P / 2, length: 4.4, ya: 1.2, yb: 0, skirtZ: 0.11 },
-  { type: 'tidewater_rampbal', pos: [-8.0, SQ, -2.12], rotY: P, length: 4.4, ya: 1.2, yb: 0, skirtZ: 0.11 },
-  { type: 'tidewater_rampbal', pos: [-12.4, SQ, 2.12], rotY: 0, length: 4.4, ya: 0, yb: 1.2, skirtZ: 0.11 },
-  { type: 'tidewater_rampbal', pos: [-1.2, SQ, -27.2], rotY: -P / 2, length: 2.69, ya: 0, yb: 1.0, rail: false, skirtZ: 0.025 },
-  { type: 'tidewater_rampbal', pos: [1.2, SQ, -24.51], rotY: P / 2, length: 2.69, ya: 1.0, yb: 0, rail: false, skirtZ: 0.025 },
-  { type: 'tidewater_rampbal', pos: [-1.2, SQ, -17.49], rotY: -P / 2, length: 2.69, ya: 1.0, yb: 0, rail: false, skirtZ: 0.025 },
-  { type: 'tidewater_rampbal', pos: [1.2, SQ, -14.8], rotY: P / 2, length: 2.69, ya: 0, yb: 1.0, rail: false, skirtZ: 0.025 },
-  { type: 'tidewater_rampbal', pos: [17.47, 0, STAIR.top], rotY: -P / 2, length: STAIR.foot - STAIR.top, ya: COLO.deckTop, yb: 0, rail: false, skirtZ: 0 },
-  { type: 'tidewater_rampbal', pos: [13.96, 0, -41.5], rotY: -P / 2, length: 3.2, ya: 2.4, yb: 3.8, skirtZ: 0.13 },
-  { type: 'tidewater_rampbal', pos: [20.01, 0, STAIR.foot], rotY: P / 2, length: STAIR.foot - STAIR.top, ya: 0, yb: COLO.deckTop, rail: false, skirtZ: 0 },
+  { type: 'tidewater_rampbal', pos: [-10.8, SQ, tq(-35.9)], rotY: 0, length: 6, ya: 0, yb: 2.6, skirtZ: 0.09 },
+  { type: 'tidewater_rampbal', pos: [4.8, SQ, tq(-35.9)], rotY: 0, length: 6, ya: 2.6, yb: 0, skirtZ: 0.09 },
+  { type: 'tidewater_rampbal', pos: [-2.12, SQ, -12.4], rotY: -P / 2, length: 4.4, ya: 0, yb: 1.2, skirtZ: 0.11, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [2.12, SQ, -8.0], rotY: P / 2, length: 4.4, ya: 1.2, yb: 0, skirtZ: 0.11, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-8.0, SQ, -2.12], rotY: P, length: 4.4, ya: 1.2, yb: 0, skirtZ: 0.11, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-12.4, SQ, 2.12], rotY: 0, length: 4.4, ya: 0, yb: 1.2, skirtZ: 0.11, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-1.2, SQ, tq(-27.2)], rotY: -P / 2, length: 2.69, ya: 0, yb: 1.0, rail: false, skirtZ: 0.025, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [1.2, SQ, tq(-24.51)], rotY: P / 2, length: 2.69, ya: 1.0, yb: 0, rail: false, skirtZ: 0.025, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-1.2, SQ, tq(-17.49)], rotY: -P / 2, length: 2.69, ya: 1.0, yb: 0, rail: false, skirtZ: 0.025, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [1.2, SQ, tq(-14.8)], rotY: P / 2, length: 2.69, ya: 0, yb: 1.0, rail: false, skirtZ: 0.025, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [17.47, 0, STAIR.top], rotY: -P / 2, length: STAIR.foot - STAIR.top, ya: COLO.deckTop, yb: 0, rail: false, skirtZ: 0, notIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [13.96, 0, tq(-41.5)], rotY: -P / 2, length: 3.2, ya: 2.4, yb: 3.8, skirtZ: 0.13 },
+  { type: 'tidewater_rampbal', pos: [20.01, 0, STAIR.foot], rotY: P / 2, length: STAIR.foot - STAIR.top, ya: 0, yb: COLO.deckTop, rail: false, skirtZ: 0, notIn: 'tower' },
+  // Tower Command: the shorter terrace flights, the bandstand's (wider) mid-side steps, the Crescent's turned stair
+  { type: 'tidewater_rampbal', pos: [-2.12, SQ, -TW.flight], rotY: -P / 2, length: TW.flight - 8.0, ya: 0, yb: 1.2, skirtZ: 0.11, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [2.12, SQ, -8.0], rotY: P / 2, length: TW.flight - 8.0, ya: 1.2, yb: 0, skirtZ: 0.11, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-8.3, SQ, -2.12], rotY: P, length: TW.flightW - 8.3, ya: 1.3, yb: 0, skirtZ: 0.11, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-TW.flightW, SQ, 2.12], rotY: 0, length: TW.flightW - 8.3, ya: 0, yb: 1.3, skirtZ: 0.11, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [-1.4, SQ, BSTEP[1]], rotY: -P / 2, length: BSTEP[0] - BSTEP[1], ya: 1.0, yb: 0, rail: false, skirtZ: 0.025, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [1.4, SQ, BSTEP[0]], rotY: P / 2, length: BSTEP[0] - BSTEP[1], ya: 0, yb: 1.0, rail: false, skirtZ: 0.025, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [17.47, 0, STAIR_REV.foot], rotY: -P / 2, length: STAIR_REV.top - STAIR_REV.foot, ya: 0, yb: COLO.deckTop, rail: false, skirtZ: 0, onlyIn: 'tower' },
+  { type: 'tidewater_rampbal', pos: [20.01, 0, STAIR_REV.top], rotY: P / 2, length: STAIR_REV.top - STAIR_REV.foot, ya: COLO.deckTop, yb: 0, rail: false, skirtZ: 0, onlyIn: 'tower' },
   // bronze name plaques on the terrace's outer face beside its south + west flights
   { type: 'tidewater_streetname', pos: [-2.914, 0.42, -8.006], rotY: -2.793, text: 'JUBILEE', sub: '1887', bronze: true },
   { type: 'tidewater_streetname', pos: [-8.006, 0.42, -2.914], rotY: -1.920, text: 'JUBILEE', sub: '1887', bronze: true },
   // ---- the terrace: candelabra lamps on the dais corners, a back-to-back bench pair (Turf War only: Zone Control's
   //      centre zone is the terrace, and the benches are cleared off it so the dais is open to fight over)
   { type: 'tidewater_lamp', pos: [-5.1, TERR.daisTop, -5.1], variant: 2 },
-  { type: 'tidewater_lamp', pos: [5.1, TERR.daisTop, -5.1], variant: 2 },
+  { type: 'tidewater_lamp', pos: [5.1, TERR.daisTop, -5.1], variant: 2, notIn: 'tower' },   // (Tower Command: the inflatable)
   { type: 'tidewater_bench', pos: [-3.95, TERR.daisTop, -2.9], rotY: P / 2, variant: 1, notIn: 'zones' },
+  // Tower Command: a long inflatable across the dais corner, its long side on the diagonal (the user's drawing)
+  { type: 'inflatable', size: 'long', pos: [4.9, TERR.daisTop - 0.05, -5.1], rotY: -P / 4, onlyIn: 'tower' },
   // ---- the Square (paving at SQ)
-  { type: 'tidewater_kerb', ...SQL(-11.5, -37), length: 30.1 },
-  { type: 'tidewater_kerb', ...SQL(-15, -25), length: 36 },
-  { type: 'tidewater_kerb', ...SQL(-9, -37), rotY: -P / 2, length: 12, w: 0.3 },
-  { type: 'tidewater_kerb', ...SQL(9, -37), rotY: -P / 2, length: 12, w: 0.3 },
+  { type: 'tidewater_kerb', ...SQL(-11.5, tq(-37)), length: 30.1 },
+  { type: 'tidewater_kerb', ...SQL(-15, tq(-25)), length: 36 },
+  { type: 'tidewater_kerb', ...SQL(-9, tq(-37)), rotY: -P / 2, length: 12, w: 0.3 },
+  { type: 'tidewater_kerb', ...SQL(9, tq(-37)), rotY: -P / 2, length: 12, w: 0.3 },
   // the two halves' slabs meet on the mid line (flight foot → pier forecourt), and the loggia-front strip by the wing
-  { type: 'tidewater_kerb', ...SQL(12.4, 0), length: 4.7 },
-  { type: 'tidewater_kerb', ...SQL(10.8, -38.4), length: 3.15, w: 0.3 },
-  { type: 'tidewater_fountain', ...SQL(0, -31) },
-  { type: 'tidewater_bandstand', ...SQL(0, -21) },
-  { type: 'tidewater_floralclock', ...SQL(-8.5, -25) },
-  { type: 'tidewater_border', ...SQL(-12, -12), w: 6, d: 5, h: 0.9 },
-  { type: 'tidewater_tearooms', ...SQL(10.5, -28), h: 3.0 },
+  { type: 'tidewater_kerb', ...SQL(12.4, 0), length: 4.7, notIn: 'tower' },
+  { type: 'tidewater_kerb', ...SQL(TW.flightW, 0), length: TW.forecourt - TW.flightW, onlyIn: 'tower' },   // (to the forecourt's new edge)
+  { type: 'tidewater_kerb', ...SQL(10.8, tq(-38.4)), length: 3.15, w: 0.3 },
+  { type: 'tidewater_fountain', ...SQL(0, tq(-31)), notIn: 'tower' },
+  { type: 'tidewater_bandstand', ...SQL(0, tq(-21)), notIn: 'tower' },
+  { type: 'tidewater_floralclock', ...SQL(-8.5, tq(-25)) },
+  { type: 'tidewater_border', ...SQL(-12, -12), w: 6, d: 5, h: 0.9, notIn: 'tower' },
+  // Tower Command: the fountain's basin a little smaller (the track's goal run passes its front), the bandstand moved
+  // out, raised and opened at the back (the tower rides through it), the flower border trimmed (the track rounds it)
+  { type: 'tidewater_fountain', ...SQL(0, tq(-31)), Rb: 2.0, onlyIn: 'tower' },
+  { type: 'tidewater_bandstand', ...SQL(0, TW.band.z), ct: TW.band.ct, wide: true, back: false, onlyIn: 'tower' },
+  { type: 'tidewater_border', ...SQL(-11.55, -11.8), w: 5.1, d: 4.0, h: 0.9, onlyIn: 'tower' },
+  { type: 'tidewater_tearooms', ...SQL(10.5, tq(-28)), h: 3.0 },
   { type: 'tidewater_anchor', ...SQL(12.5, -17.5) },
-  { type: 'tidewater_lamp', ...SQL(-6.5, -35.2), variant: 0 },
-  { type: 'tidewater_lamp', ...SQL(6.5, -35.2), variant: 0 },
-  { type: 'tidewater_lamp', ...SQL(-4.9, -26.6), variant: 0, baskets: true },
-  { type: 'tidewater_lamp', ...SQL(4.9, -26.6), variant: 0, baskets: true, rotY: P },
+  { type: 'tidewater_lamp', ...SQL(-6.5, tq(-35.2)), variant: 0 },
+  { type: 'tidewater_lamp', ...SQL(6.5, tq(-35.2)), variant: 0 },
+  { type: 'tidewater_lamp', ...SQL(-4.9, tq(-26.6)), variant: 0, baskets: true, notIn: 'tower' },
+  { type: 'tidewater_lamp', ...SQL(4.9, tq(-26.6)), variant: 0, baskets: true, rotY: P, notIn: 'tower' },
   { type: 'tidewater_lamp', ...SQL(6.2, -15.4), variant: 0 },
-  { type: 'tidewater_lamp', ...SQL(-6.4, -15.8), variant: 0 },
-  { type: 'bunting', ...SQL(-4.9, -26.6), rotY: 0, length: 9.8, height: 4.5, posts: false },
-  { type: 'bunting', ...SQL(-6.5, -35.2), rotY: 0, length: 13, height: 4.4, posts: false },
-  { type: 'tidewater_bench', ...SQL(-6.5, -20.5), rotY: P / 2 },
-  { type: 'tidewater_bench', ...SQL(6.5, -20.5), rotY: -P / 2 },
-  { type: 'tidewater_barometer', ...SQL(-5.4, -12.4) },
-  { type: 'tidewater_pillarbox', ...SQL(5.0, -13.4) },
+  { type: 'tidewater_lamp', ...SQL(-6.4, -15.8), variant: 0, notIn: 'tower' },
+  { type: 'bunting', ...SQL(-4.9, tq(-26.6)), rotY: 0, length: 9.8, height: 4.5, posts: false, notIn: 'tower' },
+  // Tower Command: the fountain band's lamp pair set wider (the goal run passes between them), one lamp off the track
+  { type: 'tidewater_lamp', ...SQL(-6.4, tq(-26.6)), variant: 0, baskets: true, onlyIn: 'tower' },
+  { type: 'tidewater_lamp', ...SQL(6.4, tq(-26.6)), variant: 0, baskets: true, rotY: P, onlyIn: 'tower' },
+  { type: 'bunting', ...SQL(-6.4, tq(-26.6)), rotY: 0, length: 12.8, height: 4.5, posts: false, onlyIn: 'tower' },
+  { type: 'bunting', ...SQL(-6.5, tq(-35.2)), rotY: 0, length: 13, height: 4.4, posts: false },
+  { type: 'tidewater_bench', ...SQL(-6.5, tq(-20.5)), rotY: P / 2 },
+  { type: 'tidewater_bench', ...SQL(6.5, tq(-20.5)), rotY: -P / 2 },
+  { type: 'tidewater_barometer', ...SQL(-5.4, -12.4), notIn: 'tower' },
+  { type: 'tidewater_pillarbox', ...SQL(5.0, -13.4), notIn: 'tower' },
+  { type: 'tidewater_barometer', ...SQL(-4.4, -10.3), onlyIn: 'tower' },   // (Tower Command: both off the track)
+  { type: 'tidewater_pillarbox', ...SQL(5.0, -14.5), onlyIn: 'tower' },
   { type: 'tidewater_boattrips', ...SQL(12.6, -9.8) },
-  { type: 'tidewater_urn', ...SQL(15.3, -31.6) },
-  { type: 'tidewater_urn', ...SQL(-15.2, -17.4), color: '#9a6ac2' },
-  { type: 'tidewater_tree', ...SQL(8.0, -33.6), variant: 1, s: 0.95 },
-  { type: 'tidewater_tree', ...SQL(-10.0, -18.8), variant: 0 },
-  { type: 'tidewater_fingerpost', ...SQL(-6.6, -33.8), arms: [['PROMENADE', 150], ['TOWN HALL', -90], ['BANDSTAND', 90], ['LIFEBOAT', -150]] },
-  { type: 'tidewater_fingerpost', ...SQL(14.6, -12.8), arms: [['CRESCENT', -20], ['TOWN HALL', -95], ['PIER', 180]] },
-  { type: 'tidewater_bollard', ...SQL(16.4, -8.6), rotY: -P / 2, count: 3, step: 1.3 },
-  { type: 'tidewater_drain', ...SQL(-2.4, -27.8) }, { type: 'tidewater_drain', ...SQL(8.6, -19.6) }, { type: 'tidewater_drain', ...SQL(-9.3, -6.2) },
-  { type: 'tidewater_drain', ...SQL(3.2, -36.2), r: 0.25 }, { type: 'tidewater_drain', ...SQL(-14.2, -4.3), r: 0.25 },
-  { type: 'tidewater_gull', ...SQL(0.44, -31.25), pos: [0.44, SQ + 2.33, -31.25], rotY: -0.8, variant: 2 },
-  { type: 'tidewater_streetname', pos: [13.9, 2.1, -37.35], rotY: -P / 2, text: 'TIDEWATER PLAZA', sub: 'BOROUGH OF TIDEWATER' },
-  { type: 'tidewater_streetname', pos: [9.5, 1.7, -39.2], rotY: P / 2, text: 'HALL LANE' },
-  { type: 'tidewater_streetname', pos: [17.5, 2.6, -17.0], rotY: -P / 2, text: 'THE CRESCENT' },
+  { type: 'tidewater_urn', ...SQL(15.3, tq(-31.6)) },
+  { type: 'tidewater_urn', ...SQL(-15.2, tq(-17.4)), color: '#9a6ac2' },
+  { type: 'tidewater_tree', ...SQL(8.0, tq(-33.6)), variant: 1, s: 0.95 },
+  { type: 'tidewater_tree', ...SQL(-10.0, tq(-18.8)), variant: 0 },
+  { type: 'tidewater_fingerpost', ...SQL(-6.6, tq(-33.8)), arms: [['PROMENADE', 150], ['TOWN HALL', -90], ['BANDSTAND', 90], ['LIFEBOAT', -150]] },
+  { type: 'tidewater_fingerpost', ...SQL(14.6, -12.8), arms: [['CRESCENT', -20], ['TOWN HALL', -95], ['PIER', 180]], notIn: 'tower' },
+  { type: 'tidewater_bollard', ...SQL(16.4, -8.6), rotY: -P / 2, count: 3, step: 1.3, notIn: 'tower' },
+  // Tower Command: the fingerpost off the track's corner, the cannon bollards along the forecourt's new kerb
+  { type: 'tidewater_fingerpost', ...SQL(13.4, -14.4), arms: [['CRESCENT', -20], ['TOWN HALL', -95], ['PIER', 180]], onlyIn: 'tower' },
+  { type: 'tidewater_bollard', pos: [TW.forecourt + 0.25, 0, -8.6], rotY: -P / 2, count: 3, step: 1.3, onlyIn: 'tower' },
+  { type: 'tidewater_drain', ...SQL(-2.4, tq(-27.8)) }, { type: 'tidewater_drain', ...SQL(8.6, tq(-19.6)) }, { type: 'tidewater_drain', ...SQL(-9.3, -6.2) },
+  { type: 'tidewater_drain', ...SQL(3.2, tq(-36.2)), r: 0.25 }, { type: 'tidewater_drain', ...SQL(-14.2, -4.3), r: 0.25 },
+  { type: 'tidewater_gull', pos: [0.44, SQ + 2.33, tq(-31.25)], rotY: -0.8, variant: 2 },
+  { type: 'tidewater_streetname', pos: [13.9, 2.1, tq(-37.35)], rotY: -P / 2, text: 'TIDEWATER PLAZA', sub: 'BOROUGH OF TIDEWATER' },
+  { type: 'tidewater_streetname', pos: [9.5, 1.7, tq(-39.2)], rotY: P / 2, text: 'HALL LANE' },
+  { type: 'tidewater_streetname', pos: [17.5, 2.6, -17.0], rotY: -P / 2, text: 'THE CRESCENT', notIn: 'tower' },
+  { type: 'tidewater_streetname', pos: [17.5, 2.6, (STAIR_REV.top + STAIR_REV.landing) / 2], rotY: -P / 2, text: 'THE CRESCENT', onlyIn: 'tower' },
   // ---- the Promenade: shelter, ice-cream kiosk + cart, Punch & Judy, the lifeboat collection box
-  { type: 'tidewater_shelter', pos: [-20.5, 0, -19] },
+  { type: 'tidewater_shelter', pos: [-20.5, 0, tq(-19)] },
   { type: 'tidewater_icecream', pos: [-23.6, 0, -9] },
   { type: 'cart', pos: [-19.6, 0, -12.6], rotY: P / 2, variant: 0 },
-  { type: 'tidewater_punchjudy', pos: [-14.4, 0, -30.4], rotY: P },
-  { type: 'deckchair', pos: [-13.4, 0, -32.9], rotY: 0.15, variant: 1 },
-  { type: 'deckchair', pos: [-15.8, 0, -32.6], rotY: -0.3 },
-  { type: 'tidewater_rnlibox', pos: [-11.9, 0, -35.4], rotY: -0.5 },
+  { type: 'tidewater_punchjudy', pos: [-14.4, 0, tq(-30.4)], rotY: P },
+  { type: 'deckchair', pos: [-13.4, 0, tq(-32.9)], rotY: 0.15, variant: 1 },
+  { type: 'deckchair', pos: [-15.8, 0, tq(-32.6)], rotY: -0.3 },
+  { type: 'tidewater_rnlibox', pos: [-11.9, 0, tq(-35.4)], rotY: -0.5 },
   { type: 'tidewater_streetname', pos: [-24, 2.1, -4.0], rotY: P / 2, text: 'MARINE PARADE' },
   { type: 'tidewater_gull', pos: [-24.45, 3.15, -4.0], rotY: 2.2, variant: 2 },
   // ---- the pier forecourt: its sea railing past the booths, a lamp, a bench
   { type: 'tidewater_searail', pos: [-26.87, 0, 5.5], rotY: -P / 2, length: 3.5, col: false },
-  { type: 'tidewater_lamp', pos: [-18.2, 0, 7.6], variant: 0, baskets: true },
+  { type: 'tidewater_lamp', pos: [-18.2, 0, 7.6], variant: 0, baskets: true, notIn: 'tower' },
+  { type: 'tidewater_lamp', pos: [-18.2, SQ, 7.6], variant: 0, baskets: true, onlyIn: 'tower' },   // (on the square there)
   { type: 'tidewater_bench', pos: [-25.9, 0, 7.2], rotY: P / 2 },
   ...out,
 ];

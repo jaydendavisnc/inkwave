@@ -7,7 +7,7 @@
 //
 // Conventions: metres, Y up, `pos` = base point, rotY turns local +Z (the "front"). Wall-mounted pieces treat local
 // z = 0 as the wall face and project toward +Z. Signage uses 3D channel / flat painted letters from a stroke font.
-import { LOCAL, ROT_RAD, toWorld } from './layout.js';
+import { LOCAL, ROT_RAD, toWorld, STRETCH, SLICE, S0, stretchZ } from './layout.js';
 
 const P = Math.PI;
 
@@ -544,7 +544,7 @@ export function register(D, H) {
   // the door end (two leaves, four locking bars with cams + handles, hinges, CSC plate, owner code), or for reefers the
   // machinery end at −Z (grille, fan, control box, power cable). Everything hugs the block faces (≤ 4 cm proud).
   function containerBody(B, x, y, z, len, color, o = {}) {
-    const L = len === 20 ? 6.06 : 12.19, W = 2.44, Hh = o.h ?? 2.6, c = color, dk = shade(c, 0.8), dk2 = shade(c, 0.6);
+    const L = len === 20 ? 6.06 : len === 10 ? 2.99 : 12.19, W = 2.44, Hh = o.h ?? 2.6, c = color, dk = shade(c, 0.8), dk2 = shade(c, 0.6);
     B.push(x, y, z, o.ry ?? 0);
     if (o.bottom) {
       // loose box (hanging from the spreader / on a chassis): core + ribbed side sheets + cross members underneath
@@ -628,7 +628,7 @@ export function register(D, H) {
   }
   D.cargo_box = {
     desc: 'Container dressing for a stack box (the body is a level block): corner posts + castings, rails, forklift pockets, door end (locking bars, cams, hinges, CSC plate, owner code) at +Z or a reefer machinery end — hardware only over the block face, so ink on the end shows. pos = bottom centre, local Z = length.',
-    params: { len: '20 | 40', color: 'box paint', door: '+1 door at local +Z, -1 at −Z', reefer: 'bool', code: 'owner code' }, variants: 1, mount: 'ground',
+    params: { len: '10 | 20 | 40', color: 'box paint', door: '+1 door at local +Z, -1 at −Z', reefer: 'bool', code: 'owner code' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
       containerBody(B, 0, 0, 0, o.len ?? 20, o.color ?? '#a8583f', { doorAt: o.door ?? 1, reefer: !!o.reefer, code: o.code });
@@ -903,7 +903,7 @@ export function register(D, H) {
         // raised boom barrier at the arena end of the island
         B.push(ix + 0.45, 0.18, 2.4);
         B.box('paint', K.white, 0.36, 1.05, 0.36, 0, 0.525, 0, { r: 0.04 });
-        B.col(-0.18, 0, -0.18, 0.18, 1.05, 0.18, { roof: true });
+        B.col(ix + 0.27, 0.18, 2.22, ix + 0.63, 1.23, 2.58, { roof: true });   // (B.col takes the prop's own frame, not the pushed one)
         B.push(0.05, 1.0, 0, 0, 0, 1.35);
         for (let k = 0; k < 8; k++) pbox(B, NS('paint'), k % 2 ? K.white : K.red, 0.42, 0.08, 0.06, 0.25 + k * 0.42, 0, 0);
         B.pop();
@@ -1704,6 +1704,385 @@ export function register(D, H) {
       }
     },
   };
+
+  // ================================================================================================ the slice (Long Stages)
+  // RTG 41: a rubber-tyred gantry parked across the truck lane (pos = centre on the ground; its sills run along local Z at
+  // x = ±xl, the span across X). Each sill rides two 2-wheel bogies (sill colliders: 1.3 m cover, walkable, never
+  // inkable); four tapered legs (off-limits tops); side girders + portal beams at yt; trolley over the lane with the
+  // operator cab hanging below it and the spreader hoisted empty (no collider: it would roof the transfer platform);
+  // the diesel house on the +X girder; a caged ladder up one leg; floods over the lane; beacons. The whole top frame
+  // is off limits (roof: a special can get you up there, you slide off). Same livery as the backyard's RTG 22.
+  D.cargo_rtg = {
+    desc: 'Rubber-tyred gantry crane parked across a lane (pos = centre on the ground, sills along local Z at x = ±xl): tyred bogies, sill beams (colliders, 1.3 m), four tapered white legs, blue side girders + portal beams at yt, trolley with a hanging cab and the spreader hoisted empty, diesel house, caged ladder, floods, beacons, RTG number + CARGO lettering. Top frame off limits (roof).',
+    params: { xl: 'sill centre |x| (8.09)', lz: 'leg z (3.15)', yt: 'top of the legs (15)', sill: 'sill length (7.2)', tx: 'trolley x (0)', num: 'RTG 41' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const XL = o.xl ?? 8.09, LZ = o.lz ?? 3.15, YT = o.yt ?? 15, SL = o.sill ?? 7.2, rc = '#3e6fa8', rd = shade(rc, 0.78), wc = K.white, num = o.num ?? 'RTG 41';
+      for (const sx of [-1, 1]) {
+        const x = sx * XL;
+        // sill beam on its bogies (2 wheels in line each end), hazard ends, buffer blocks
+        B.box('paint', rc, 0.9, 0.62, SL, x, 1.0, 0, { r: 0.06 });
+        for (const ez of [-1, 1]) { B.push(x, 1.0, ez * (SL / 2 + 0.005), ez > 0 ? 0 : PI); hazard(B, 0.86, 0.5, 0, 0, 0); B.pop(); }
+        for (const bz of [-(SL / 2 - 1.15), SL / 2 - 1.15]) {
+          B.box('paint', rd, 0.8, 0.5, 2.1, x, 0.95, bz, { r: 0.05 });
+          for (const wz of [-0.55, 0.55]) tyre(B, x, 0.6, bz + wz, 0.6, 0.46);
+        }
+        B.col(x - 0.45, 0, -SL / 2, x + 0.45, 1.3, SL / 2);
+        // legs (wider at the foot), a tie beam between them above head height + a K brace, the leg number
+        for (const sz of [-1, 1]) {
+          B.add('paint', frustumGeo(0.9, 1.2, 0.7, 0.8, YT - 1.3), wc, x, 1.3, sz * LZ, {});
+          pbox(B, NS('paint'), rc, 0.94, 0.5, 1.24, x, 1.55, sz * LZ);
+          B.col(x - 0.45, 0, sz * LZ - 0.6, x + 0.45, YT, sz * LZ + 0.6, { roof: true });
+        }
+        pbox(B, 'paint', wc, 0.5, 0.6, LZ * 2 - 0.8, x, 7.2, 0);
+        for (const sz of [-1, 1]) beam(B, 'paint', wc, [x, 7.5, 0], [x, YT - 1.2, sz * (LZ - 0.5)], 0.4, 0.4);
+        B.push(x - sx * 0.46, 0, -LZ, -sx * HP); letters(B, num.replace('RTG ', ''), { h: 0.8, x: 0, y: 4.2, z: 0.01, c: rc, flat: true, wt: 0.2 }); B.pop();
+        // side girder over the legs
+        B.box('paint', rc, 0.9, 1.3, LZ * 2 + 1.6, x, YT + 0.65, 0, { r: 0.06 });
+      }
+      // portal beams across the span (lettering both faces), trolley rails on them
+      for (const sz of [-1, 1]) {
+        B.box('paint', rc, XL * 2 + 1.2, 1.4, 1.0, 0, YT + 0.7, sz * LZ, { r: 0.07 });
+        pbox(B, NS('metal'), K.greyDk, XL * 2 - 1.0, 0.12, 0.14, 0, YT + 1.46, sz * LZ);
+        B.push(0, YT, sz * (LZ + 0.505), sz > 0 ? 0 : PI);
+        letters(B, num, { h: 0.72, x: -XL / 2, y: 0.34, z: 0, c: K.white, flat: true, wt: 0.2, track: 0.14 });
+        letters(B, 'CARGO', { h: 0.62, x: XL / 2, y: 0.38, z: 0, c: K.white, flat: true, wt: 0.2, track: 0.16 });
+        B.pop();
+        for (let x = -XL + 2.5; x <= XL - 2.4; x += 4.7) flood(B, x, YT - 0.1, sz * (LZ - 0.6), { rx: -0.25 * sz, glow: 1.7 });
+      }
+      // trolley (parked at tx, off the lane's middle so the map shows what's under the portal), the operator cab below
+      // it, ropes down to the spreader hoisted empty
+      const TX = o.tx ?? 0;
+      B.box('paint', rc, 3.0, 1.2, LZ * 2 + 1.4, TX, YT + 2.1, 0, { r: 0.08 });
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.cyl('metal', K.greyDk, 0.3, 0.26, TX + sx * 1.1, YT + 1.6, sz * LZ, { rx: HP, seg: 12 });
+      B.box('paint', wc, 1.6, 2.0, 1.9, TX - 1.0, YT - 0.9, -LZ + 1.3, { r: 0.08 });
+      pbox(B, NS('gloss'), K.glassLt, 1.4, 1.2, 0.04, TX - 1.0, YT - 0.8, -LZ + 2.27);
+      pbox(B, NS('gloss'), K.glassLt, 0.04, 1.1, 1.5, TX - 1.82, YT - 0.8, -LZ + 1.3);
+      pbox(B, NS('gloss'), K.glass, 1.2, 0.04, 1.4, TX - 1.0, YT - 1.92, -LZ + 1.3);
+      const SY = 10.2;
+      for (const sx of [-0.7, 0.7]) for (const sz of [-4.6, 4.6]) rodT(B, NS('metal'), K.galvDk, [TX + sx * 0.5, YT + 1.5, sz * 0.35], [TX + sx, SY + 0.3, sz], 0.035, 4);
+      B.box('paint', K.crane, 2.2, 0.35, 12.2, TX, SY + 0.18, 0, { r: 0.05 });
+      B.box('paint', K.craneDk, 1.1, 0.5, 2.4, TX, SY + 0.5, 0, { r: 0.05 });
+      for (const sz of [-1, 1]) { pbox(B, 'paint', K.craneDk, 2.6, 0.3, 0.4, TX, SY + 0.16, sz * 5.9); for (const sx of [-1, 1]) B.box(NS('paint'), K.ink, 0.32, 0.45, 0.32, TX + sx * 1.12, SY - 0.05, sz * 6.0, { r: 0.03 }); }
+      // diesel house on the +X girder: radiator louvres, exhaust stack, CARGO panel; beacons at both top corners
+      B.box('paint', wc, 2.4, 2.1, 4.8, XL + 0.2, YT + 2.35, 0, { r: 0.08 });
+      for (let k = 0; k < 6; k++) pbox(B, NS('paint'), K.greyDk, 0.03, 1.2, 0.08, XL + 1.41, YT + 2.3, -1.6 + k * 0.62);
+      B.cyl('metal', K.charcoal, 0.12, 1.4, XL - 0.4, YT + 4.0, 1.5, { seg: 8 });
+      B.push(XL + 0.2, YT + 2.35, 2.41); letters(B, 'CARGO', { h: 0.3, x: 0, y: -0.15, z: 0, c: rc, flat: true, wt: 0.22 }); B.pop();
+      for (const sx of [-1, 1]) { B.cyl('paint', '#e8962f', 0.1, 0.18, sx * XL, YT + 1.42, LZ + 0.3, { seg: 10 }); B.blink('#ffa030', sx * XL, YT + 1.56, LZ + 0.3, { size: 0.1, rate: 0.9, phase: sx, lo: 0.3, hi: 5 }); }
+      // caged ladder up the outside of the −X, −Z leg (starts above head height)
+      {
+        const x = -XL - 0.62, z = -LZ;
+        for (const dz of [-0.24, 0.24]) pbox(B, NS('metal'), K.hazY, 0.05, YT - 2.4, 0.05, x, 2.4 + (YT - 2.4) / 2, z + dz);
+        for (let y = 2.6; y < YT; y += 0.3) pbox(B, NS('metal'), K.hazY, 0.04, 0.03, 0.48, x, y, z);
+        for (let y = 3.2; y < YT; y += 1.2) B.tor(NS('metal'), K.hazY, 0.4, 0.02, x - 0.2, y, z, { rs: 4, ts: 12, arc: PI, rz: HP, ry: -HP });
+      }
+      // off-limits top frame: girders + portal beams, the trolley, the diesel house
+      B.col(-XL - 0.6, YT, -LZ - 0.8, XL + 0.6, YT + 1.5, LZ + 0.8, { roof: true });
+      B.col(TX - 1.5, YT + 1.5, -LZ - 0.7, TX + 1.5, YT + 2.7, LZ + 0.7, { roof: true });
+      B.col(XL - 1.0, YT + 1.3, -2.4, XL + 1.4, YT + 3.4, 2.4, { roof: true });
+    },
+  };
+
+  // Transfer platform dressing (pos = bottom centre of the w × d × h deck block; a stair of width sw at both ±Z ends):
+  // plated sides with stiffeners and flanges (the plates are the block's own faces: they take ink between the ribs), a
+  // hazard band under the top edge, TRANSFER POINT boards on the long sides, corner handrails either side of each stair
+  // head (rail colliders; the long sides stay open in the middle so you can drop off), the lashers' booth on the deck
+  // (roof collider), a lashing-bar rack (collider, a step), a cone bin, a lamp mast on the booth.
+  D.cargo_tp = {
+    desc: 'Transfer platform dressing (pos = bottom centre of its w × d × h deck block, stairs of width sw at both ±Z ends): plated sides with stiffeners, flanged top edge + hazard band, TRANSFER POINT 4B boards, corner handrails (rail colliders), the lashers\' booth (roof), a lashing-bar rack (collider), a cone bin.',
+    params: { w: 'x size (6)', d: 'z size (5.6)', h: 'deck height (2.4)', sw: 'stair width (3)', name: '4B' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const w = o.w ?? 6, d = o.d ?? 5.6, h = o.h ?? 2.4, sw = o.sw ?? 3, c = '#4f6d8c', dk = shade(c, 0.78), HR = 1.0;
+      // one side face: along local +X of the pushed frame, the face at z = 0 facing +Z; `hole` = the stair's span
+      const side = (len, depth, ry, hole, label) => {
+        B.push(Math.sin(ry) * depth / 2, 0, Math.cos(ry) * depth / 2, ry);
+        const spans = hole ? [[-len / 2, -hole / 2], [hole / 2, len / 2]] : [[-len / 2, len / 2]];
+        for (const [a, b] of spans) {
+          const m = (a + b) / 2, L = b - a;
+          pbox(B, 'paint', dk, L + 0.02, 0.12, 0.04, m, 0.06, 0.02);                       // base flange
+          pbox(B, 'paint', dk, L + 0.02, 0.08, 0.06, m, h - 0.04, 0.03);                     // top edge angle
+          B.push(m, h - 0.2, 0.012); hazard(B, L - 0.06, 0.16, 0, 0, 0, { pitch: 0.3 }); B.pop();
+          for (let x = a + 0.45; x < b - 0.2; x += 0.9) pbox(B, NS('paint'), shade(c, 0.9), 0.07, h - 0.46, 0.035, x, (h - 0.28) / 2 + 0.12, 0.0175);
+        }
+        if (label) {
+          pbox(B, NS('paint'), K.blueDk, 2.9, 0.46, 0.02, 0, h * 0.52, 0.045);
+          letters(B, label, { h: 0.24, x: 0, y: h * 0.52 - 0.12, z: 0.056, c: K.white, flat: true, wt: 0.2, track: 0.12 });
+        }
+        B.pop();
+      };
+      side(w, d, 0, sw, null); side(w, d, PI, sw, null);
+      side(d, w, HP, 0, 'TRANSFER ' + (o.name ?? '4B')); side(d, w, -HP, 0, 'TRANSFER ' + (o.name ?? '4B'));
+      // handrails: beside both stair heads (across the ends) and 1.6 m down each long side from the corners
+      const rail = (a, b) => {
+        handrail(B, [a[0], h, a[1]], [b[0], h, b[1]], HR, K.crane);
+        B.col(Math.min(a[0], b[0]) - 0.05, h, Math.min(a[1], b[1]) - 0.05, Math.max(a[0], b[0]) + 0.05, h + HR + 0.05, Math.max(a[1], b[1]) + 0.05, { rail: true });
+      };
+      const ex = w / 2 - 0.06, ez = d / 2 - 0.06;
+      for (const sz of [-1, 1]) for (const sx of [-1, 1]) {
+        rail([sx * (sw / 2 + 0.06), sz * ez], [sx * ex, sz * ez]);
+        rail([sx * ex, sz * ez], [sx * ex, sz * (ez - 1.5)]);
+      }
+      // the lashers' booth (+X, base-side corner of the deck): steel box, glazed all round, roof with drip edge, sign
+      {
+        const bx = 2.205, bz = -1.75, bw = 1.35, bd = 1.9, bh = 2.25, y0 = h;
+        B.push(bx, y0, bz);
+        B.box('paint', '#e6e8ea', bw, bh, bd, 0, bh / 2, 0, { r: 0.05 });
+        B.box('paint', K.blueDk, bw + 0.16, 0.12, bd + 0.16, 0, bh + 0.06, 0, { r: 0.03 });
+        for (const f of [1, -1]) {
+          pbox(B, NS('gloss'), K.glass, bw - 0.4, 0.8, 0.03, 0, 1.45, f * (bd / 2 + 0.005));
+          pbox(B, NS('glow'), '#ffe2b0', bw - 0.46, 0.22, 0.01, 0, 1.68, f * (bd / 2 + 0.02), { glow: 0.7 });
+        }
+        pbox(B, NS('gloss'), K.glass, 0.03, 0.8, bd - 0.5, bw / 2 + 0.005, 1.45, 0);
+        pbox(B, NS('paint'), '#5d6b78', 0.03, 1.95, 0.8, -bw / 2 - 0.005, 1.0, 0.2);                 // door (−X, toward the lane's middle)
+        B.push(0, bh - 0.32, bd / 2 + 0.02); pbox(B, NS('paint'), K.hazY, 1.2, 0.22, 0.01, 0, 0, 0); letters(B, 'LASHING', { h: 0.12, x: 0, y: -0.06, z: 0.006, c: K.ink, flat: true, wt: 0.24 }); B.pop();
+        B.box('paint', '#e6e8ea', 0.5, 0.4, 0.25, 0.3, bh - 0.5, -bd / 2 - 0.12, { r: 0.03 });   // AC
+        // lamp mast on the booth's corner: two floods over the deck
+        B.cyl('metal', K.galv, 0.05, 2.0, bw / 2 - 0.1, bh + 1.0, bd / 2 - 0.1, { seg: 8 });
+        flood(B, bw / 2 - 0.4, bh + 2.0, bd / 2 - 0.4, { rx: -0.9, ry: PI * 0.75, glow: 1.6 });
+        B.pop();
+        B.col(bx - bw / 2, y0, bz - bd / 2, bx + bw / 2, y0 + bh + 0.12, bz + bd / 2, { roof: true });
+      }
+      // lashing-bar rack (−X, mid-side corner): a steel frame of bars + turnbuckles (solid: cover, a step), cone bin
+      {
+        const rx = -2.13, rz = 2.15, rw = 1.5, rd = 1.1, rh = 1.1;
+        B.push(rx, h, rz);
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) pbox(B, 'metal', K.galvDk, 0.08, rh, 0.08, sx * (rw / 2 - 0.04), rh / 2, sz * (rd / 2 - 0.04));
+        pbox(B, 'metal', K.galvDk, rw, 0.08, rd, 0, 0.1, 0);
+        // (bars lie along the stillage in layers — laid flat, so nobody reads it as a stair)
+        for (let k = 0; k < 5; k++) for (let j = 0; j < 7; j++) B.cyl(NS('metal'), (j + k) % 5 ? '#8a8f8a' : '#c49a3a', 0.035, rw - 0.12, 0, 0.24 + k * 0.16, -rd / 2 + 0.16 + j * ((rd - 0.32) / 6), { rz: HP, seg: 5 });
+        for (const sx of [-1, 1]) pbox(B, 'metal', K.galvDk, 0.06, 0.06, rd, sx * (rw / 2 - 0.04), rh - 0.03, 0);
+        pbox(B, NS('paint'), K.hazY, 0.4, 0.16, 0.01, 0, rh * 0.6, rd / 2 + 0.005);
+        B.pop();
+        B.col(rx - rw / 2, h, rz - rd / 2, rx + rw / 2, h + rh, rz + rd / 2);
+        subNC(B, 'cargo_cage', -2.3, h, -2.2, 0, { variant: 1 });
+        B.col(-2.9, h, -2.7, -1.7, h + 0.9, -1.7, { rail: true });
+      }
+    },
+  };
+
+  // Lashing store: a steel shed on the reefer side of the slice (pos = floor centre of its w × d × h block, the loading
+  // dock of depth dk × 1.2 along its +X side). Low-pitch roof (off limits), corner + base trims, two roller shutters on
+  // the dock side under a cantilevered canopy (roof collider) and a fascia sign, dock bumpers and lamps, a door +
+  // windows on the +Z end, clerestory strip + downpipes on the −X side, pallets of lashing bars on the dock (colliders).
+  // The dock side and the +Z end are dressed facades (layout.js makes them un-inkable); the −X side and −Z end take ink.
+  D.cargo_store = {
+    desc: 'Lashing store (pos = floor centre of its w × d × h block, a 1.2 m loading dock of depth dk along +X): low-pitch roof, trims, roller shutters under a cantilevered canopy, LASHING STORE fascia, dock bumpers + lamps, door + windows on the +Z end, clerestory + downpipes on −X, pallets of lashing bars on the dock. Colliders: roof, canopy (roof), pallets.',
+    params: { w: 'x size', d: 'z size', h: 'eaves height (4.4)', dk: 'dock depth (2.06)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const w = o.w ?? 5.46, d = o.d ?? 11.9, h = o.h ?? 4.4, dk = o.dk ?? 2.06, wall = '#8fa3a8', trim = K.blueDk, rf = '#6f8088';
+      // roof: two slopes to a ridge along Z (0.7 m rise), gutters along the eaves, verge trims at the gable ends
+      B.add('paint', tpl(['kstroof', w, d].map(kf).join('|'), () => {
+        const g = new GB(), hw = w / 2 + 0.25, hd = d / 2 + 0.2, rh = 0.7;
+        g.face([[-hw, 0, -hd], [0, rh, -hd], [0, rh, hd], [-hw, 0, hd]], [-0.3, 1, 0]);
+        g.face([[hw, 0, -hd], [hw, 0, hd], [0, rh, hd], [0, rh, -hd]], [0.3, 1, 0]);
+        for (const sz of [-1, 1]) g.face([[-hw, 0, sz * hd], [hw, 0, sz * hd], [0, rh, sz * hd]], [0, 0, sz]);
+        return g.geo();
+      }), rf, 0, h, 0, {});
+      for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.14, 0.14, d + 0.4, sx * (w / 2 + 0.28), h - 0.02, 0);
+      for (const sz of [-1, 1]) pbox(B, NS('paint'), trim, w + 0.5, 0.1, 0.08, 0, h + 0.05, sz * (d / 2 + 0.2));
+      // corner trims + base plinth band
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) pbox(B, NS('paint'), trim, 0.12, h, 0.12, sx * (w / 2 + 0.01), h / 2, sz * (d / 2 + 0.01));
+      // ---- the dock side (+X face at x = w/2): two roller shutters, frames, canopy, fascia sign, lamps, bumpers
+      B.push(w / 2, 0, 0, HP);   // local +Z = out of the dock-side face
+      for (const zc of [-d / 4, d / 4]) {
+        const dw = 3.0, y0 = 1.2, dh = 2.5;
+        pbox(B, 'paint', '#c9ced2', dw, dh, 0.03, zc, y0 + dh / 2, 0.015);
+        for (let y = y0 + 0.1; y < y0 + dh; y += 0.12) pbox(B, NS('paint'), '#aeb4b9', dw - 0.04, 0.025, 0.02, zc, y, 0.035);
+        for (const sx of [-1, 1]) pbox(B, NS('paint'), K.hazY, 0.14, dh + 0.1, 0.06, zc + sx * (dw / 2 + 0.07), y0 + dh / 2, 0.03);
+        pbox(B, 'paint', trim, dw + 0.4, 0.26, 0.2, zc, y0 + dh + 0.13, 0.1);
+      }
+      // cantilevered canopy over the dock (brackets from the wall), fascia with the sign
+      const cy = h - 0.35;
+      pbox(B, 'paint', '#dfe3e6', d - 0.4, 0.16, dk + 0.2, 0, cy, (dk + 0.2) / 2);
+      pbox(B, 'paint', trim, d - 0.3, 0.42, 0.08, 0, cy + 0.05, dk + 0.24);
+      B.push(0, cy + 0.05, dk + 0.285); letters(B, 'LASHING STORE', { h: 0.26, x: 0, y: -0.13, z: 0, c: K.white, flat: true, wt: 0.2, track: 0.14 }); B.pop();
+      for (let z = -d / 2 + 0.6; z <= d / 2 - 0.5; z += (d - 1.1) / 3) beam(B, NS('paint'), trim, [z, cy - 0.9, 0.02], [z, cy - 0.06, dk], 0.08, 0.08);
+      for (let z = -d / 2 + 1.5; z < d / 2 - 1; z += 2.4) pbox(B, NS('glow'), K.lampCool, 1.0, 0.02, 0.2, z, cy - 0.09, dk * 0.6, { glow: 2.4 });
+      // dock face bumpers (on the dock block's outer face, x = w/2 + dk) where the RTG sill doesn't stand
+      for (const z of [d / 2 - 0.8, d / 2 - 2.8, d / 2 - 4.8]) B.box('paint', K.rubber, 0.36, 0.4, 0.14, z, 0.7, dk + 0.07, { r: 0.04 });   // (the base end: the RTG's sill stands against the mid end)
+      pbox(B, NS('paint'), K.hazY, d - 0.2, 0.06, 0.02, 0, 1.17, dk + 0.01);
+      B.pop();
+      B.col(w / 2, cy - 0.08, -d / 2 + 0.2, w / 2 + dk + 0.2, cy + 0.26, d / 2 - 0.2, { roof: true });
+      // ---- the +Z end (toward cross aisle C): a door with a canopy hood, two windows, a sign, a wall lamp
+      B.push(0, 0, d / 2, 0);
+      pbox(B, 'paint', '#5d6b78', 1.0, 2.1, 0.04, -1.2, 1.05, 0.02);
+      pbox(B, NS('metal'), K.galv, 0.05, 0.22, 0.06, -0.85, 1.05, 0.06);
+      pbox(B, 'paint', trim, 1.4, 0.08, 0.5, -1.2, 2.3, 0.25);
+      for (const wx of [0.6, 1.9]) { pbox(B, NS('gloss'), K.glass, 0.9, 0.9, 0.02, wx, 1.7, 0.012); pbox(B, NS('glow'), '#ffe2b0', 0.84, 0.3, 0.01, wx, 1.95, 0.025, { glow: 0.7 }); pbox(B, 'paint', K.white, 1.0, 0.06, 0.06, wx, 1.22, 0.03); }
+      pbox(B, 'paint', K.blueDk, 3.2, 0.42, 0.03, 0.4, 3.35, 0.015);
+      letters(B, 'LASHING STORE · 4B', { h: 0.2, x: 0.4, y: 3.25, z: 0.035, c: K.white, flat: true, wt: 0.22 });
+      flood(B, -1.2, 2.75, 0.3, { rx: 0.6, c: K.charcoal, lamp: K.lamp, glow: 1.0 });
+      B.pop();
+      // ---- the −X side: clerestory strip (lit at dusk), downpipes at the ends
+      B.push(-w / 2, 0, 0, -HP);
+      pbox(B, NS('gloss'), K.glass, d - 2.0, 0.4, 0.02, 0, h - 0.6, 0.012);
+      pbox(B, NS('glow'), '#ffe2b0', d - 2.1, 0.12, 0.01, 0, h - 0.66, 0.024, { glow: 0.5 });
+      for (const z of [-d / 2 + 0.35, d / 2 - 0.35]) B.cyl(NS('paint'), trim, 0.06, h - 0.1, z, (h - 0.1) / 2, 0.1, { seg: 6 });
+      B.pop();
+      // ---- on the dock: two pallets of lashing bars (cover, a step up) and a pallet truck
+      for (const [z, n] of [[-d / 2 + 2.2, 3], [d / 2 - 3.6, 2]]) {
+        const x = w / 2 + dk / 2, ph = 0.14 + n * 0.28;
+        B.push(x, 1.2, z);
+        pbox(B, 'wood', '#a88a62', 1.0, 0.14, 1.2, 0, 0.07, 0);
+        for (let k = 0; k < n; k++) for (let j = 0; j < 7; j++) rodT(B, NS('metal'), j % 3 ? '#8a8f8a' : '#c49a3a', [-0.42 + j * 0.14, 0.22 + k * 0.28, -0.56], [-0.42 + j * 0.14, 0.22 + k * 0.28, 0.56], 0.05, 5);
+        for (const sz of [-0.35, 0.35]) pbox(B, NS('paint'), K.hazY, 1.02, ph - 0.1, 0.03, 0, (ph + 0.1) / 2, sz);
+        B.pop();
+        B.col(x - 0.5, 1.2, z - 0.6, x + 0.5, 1.2 + ph, z + 0.6);
+      }
+      B.push(w / 2 + dk / 2 + 0.1, 1.2, 0.4, 0.3);
+      pbox(B, 'paint', K.red, 0.5, 0.12, 1.1, 0, 0.1, 0); B.cyl(NS('metal'), K.charcoal, 0.03, 1.0, 0, 0.6, -0.55, { seg: 6, rx: -0.3 });
+      B.pop();
+      // off-limits roof (the block's own top is off limits too; this catches the pitched sheets above it)
+      B.col(-w / 2 - 0.25, h, -d / 2 - 0.2, w / 2 + 0.25, h + 0.72, d / 2 + 0.2, { roof: true });
+    },
+  };
+
+  // Weighbridge office (front +Z, pos = bottom centre): a small cabin with a glazed front, door, AC, WEIGHBRIDGE 2 sign,
+  // and beside it on a post the read-out board (GROSS … t, glowing digits) and a traffic signal. Collider: cabin (roof),
+  // the post.
+  D.cargo_wbhut = {
+    desc: 'Weighbridge office (front +Z): cabin with glazed front + side, door, AC, WEIGHBRIDGE 2 sign, read-out board on a post (glowing digits), red/green signal. Colliders: cabin (roof), post.',
+    params: { w: 'm (2.6)', d: 'm (2.4)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const w = o.w ?? 2.6, d = o.d ?? 2.4, h = 2.6;
+      B.box('paint', '#e9ecee', w, h, d, 0, h / 2 + 0.15, 0, { r: 0.06 });
+      B.box('paint', K.concrete, w + 0.3, 0.15, d + 0.3, 0, 0.075, 0, { r: 0.03 });
+      B.box('paint', K.blueDk, w + 0.2, 0.18, d + 0.2, 0, h + 0.24, 0, { r: 0.04 });
+      pbox(B, NS('gloss'), K.glass, w - 0.4, 1.0, 0.03, 0, 1.75, d / 2 + 0.005);
+      pbox(B, NS('glow'), '#ffe2b0', w - 0.46, 0.3, 0.01, 0, 2.05, d / 2 + 0.02, { glow: 0.8 });
+      pbox(B, NS('gloss'), K.glass, 0.03, 1.0, d - 0.8, w / 2 + 0.005, 1.75, 0.1);
+      pbox(B, NS('paint'), '#5d6b78', 0.03, 2.0, 0.85, -w / 2 - 0.005, 1.15, 0.5);
+      B.box('paint', '#e6e8ea', 0.7, 0.5, 0.3, 0.4, 2.1, -d / 2 - 0.15, { r: 0.04 });
+      B.push(0, h + 0.33, d / 2 + 0.11); pbox(B, 'paint', K.hazY, 2.2, 0.3, 0.04, 0, 0.1, 0); letters(B, 'WEIGHBRIDGE 2', { h: 0.14, x: 0, y: 0.03, z: 0.025, c: K.ink, flat: true, wt: 0.24 }); B.pop();
+      B.col(-w / 2 - 0.15, 0, -d / 2 - 0.15, w / 2 + 0.15, h + 0.35, d / 2 + 0.15, { roof: true });
+      // read-out board + signal on a post at the front corner
+      const px = w / 2 + 0.6, pz = d / 2 + 0.2;
+      B.cyl('metal', K.galv, 0.07, 3.4, px, 1.7, pz, { seg: 8 });
+      B.push(px, 3.0, pz, 0);
+      B.box('paint', K.ink, 1.4, 0.6, 0.14, 0, 0, 0, { r: 0.03 });
+      letters(B, '28.4 T', { h: 0.28, x: 0, y: -0.14, z: 0.075, c: '#ff8a3a', flat: true, wt: 0.22, mat: 'glow', glow: 1.6 });
+      B.pop();
+      B.push(px, 2.2, pz + 0.12);
+      B.box(NS('paint'), K.ink, 0.28, 0.6, 0.18, 0, 0, 0, { r: 0.03 });
+      B.sph(NS('glow'), '#ff5a3c', 0.075, 0, 0.14, 0.09, { ws: 8, hs: 6, glow: 1.2 });
+      B.sph(NS('glow'), '#63e08a', 0.075, 0, -0.14, 0.09, { ws: 8, hs: 6, glow: 1.8 });
+      B.pop();
+      B.col(px - 0.1, 0, pz - 0.1, px + 0.1, 3.4, pz + 0.1);
+    },
+  };
+
+  // Block sign at a stack block's end (pos = pole base): a galvanised pole with a terminal-blue board carrying the block
+  // id on both faces (read from the aisle), a lamp over it. Collider: the pole.
+  D.cargo_blocksign = {
+    desc: 'Block id sign (pos = pole base): galvanised pole, blue board with the block id on both faces, a small lamp. Collider: pole.',
+    params: { text: 'block id (4B)', h: 'board centre height (3.4)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const h = o.h ?? 3.4, txt = o.text ?? '4B';
+      B.cyl('metal', K.galv, 0.07, h + 0.7, 0, (h + 0.7) / 2, 0, { seg: 8 });
+      pbox(B, NS('metal'), K.galvDk, 0.3, 0.04, 0.3, 0, 0.02, 0);
+      B.box('paint', K.blueDk, 1.3, 1.0, 0.08, 0, h, 0, { r: 0.03 });
+      for (const f of [1, -1]) { B.push(0, h, f * 0.045, f > 0 ? 0 : PI); letters(B, txt, { h: 0.56, x: 0, y: -0.28, z: 0, c: K.white, flat: true, wt: 0.2, track: 0.1 }); B.pop(); }
+      flood(B, 0, h + 0.75, 0.25, { rx: 0.7, c: K.charcoal, glow: 1.2 });
+      B.col(-0.08, 0, -0.08, 0.08, h + 0.7, 0.08);
+    },
+  };
+
+  // Folded flat racks stacked four high on a level block (pos = bottom centre, length along local Z, the block is the
+  // collider): each layer's side beams, corner castings, folded end walls, two yellow straps round the stack
+  D.cargo_flatstack = {
+    desc: 'Dressing for a stack of folded flat racks (pos = bottom centre of its 2.44 × h × 6.06 block, length along local Z): per-layer side beams, corner castings, folded end walls, straps. Non-colliding.',
+    params: { h: 'stack height (1.3)', n: 'layers (4)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const W = 2.44, L = 6.06, H = o.h ?? 1.3, n = o.n ?? 4, lh = H / n, c = '#56794f', dk = shade(c, 0.7);
+      for (let k = 0; k < n; k++) {
+        const y = k * lh;
+        for (const sx of [-1, 1]) pbox(B, NS('paint'), dk, 0.04, 0.12, L - 0.3, sx * (W / 2 + 0.02), y + 0.08, 0);
+        for (const sz of [-1, 1]) pbox(B, NS('paint'), shade(c, 0.85), W - 0.3, lh - 0.08, 0.04, 0, y + lh / 2, sz * (L / 2 + 0.02));
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) pbox(B, NS('paint'), K.ink, 0.2, 0.14, 0.2, sx * (W / 2 - 0.08), y + 0.07, sz * (L / 2 - 0.08));
+      }
+      for (const z of [-1.5, 1.5]) for (const sx of [-1, 1]) pbox(B, NS('paint'), K.hazY, 0.02, H, 0.06, sx * (W / 2 + 0.035), H / 2, z);
+    },
+  };
+
+  // Container barge moored alongside the free (reefer-side) quay: quay-side hull plane at local x = 0 (the barge lies
+  // toward +X, beam bm), centred on pos along Z (length L). Low hull with a gunwale and rubbing strakes, a hold coaming
+  // and two rows of boxes 1–2 high, the liftable wheelhouse + accommodation at the local −Z end, name + registration,
+  // tyre fenders on the quay side, mooring lines to the quay bollards (o.lines: [bitt z, bollard z], quay at x = −gap).
+  // Visual only (outside the arena); its hull + cargo are off limits (roof: you slide off into the harbour).
+  D.cargo_barge = {
+    desc: 'Container barge alongside (quay-side hull plane at local x = 0, the barge toward +X, centred on pos along Z): hull + gunwale + strakes, hold coaming, 20\'/40\' boxes in two rows, wheelhouse + accommodation at −Z, name, tyre fenders, mooring lines to the quay bollards. Visual only; hull + cargo off limits.',
+    params: { length: 'm (27)', beam: 'm (9.4)', gap: 'quay gap m (0.9)', name: 'barge name', seed: 'cargo seed', lines: '[[bitt z, bollard z]]' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const L = o.length ?? 27, Bm = o.beam ?? 9.4, gap = o.gap ?? 0.9, YD = -0.55, hull = '#2f3d4a', rnd = shipRng(o.seed ?? 31);
+      // hull: box with a raked bow end at +Z, boot top, gunwale, strakes
+      B.add('paint', tpl(['kbarge', L, Bm].map(kf).join('|'), () => {
+        const g = new GB(), y0 = SEA - 1.2, y1 = YD, z0 = -L / 2, z1 = L / 2, rk = 1.6;
+        g.face([[0, y0, z0], [0, y0, z1 - rk], [0, y1, z1], [0, y1, z0]], [-1, 0, 0]);
+        g.face([[Bm, y0, z0], [Bm, y1, z0], [Bm, y1, z1], [Bm, y0, z1 - rk]], [1, 0, 0]);
+        g.face([[0, y0, z1 - rk], [Bm, y0, z1 - rk], [Bm, y1, z1], [0, y1, z1]], [0, -0.6, 1]);
+        g.face([[0, y0, z0], [0, y1, z0], [Bm, y1, z0], [Bm, y0, z0]], [0, 0, -1]);
+        g.face([[0, y1, z0], [0, y1, z1], [Bm, y1, z1], [Bm, y1, z0]], [0, 1, 0]);
+        return g.geo();
+      }), hull, 0, 0, 0, {});
+      for (const sx of [0, Bm]) {
+        pbox(B, NS('paint'), '#8a3a30', 0.03, 0.5, L - 1.8, sx + (sx ? 0.012 : -0.012), SEA + 0.1, -0.9);
+        pbox(B, 'paint', shade(hull, 0.8), 0.16, 0.3, L, sx + (sx ? 0.06 : -0.06), YD + 0.1, 0);
+        pbox(B, NS('paint'), shade(hull, 0.75), 0.12, 0.12, L - 1, sx + (sx ? 0.06 : -0.06), YD - 0.5, -0.5);
+      }
+      // hold coaming and the cargo: two rows of boxes, 1–2 high, 20' and 40' bays
+      const hz0 = -L / 2 + 6.2, hz1 = L / 2 - 1.6;
+      pbox(B, 'paint', '#3b4a58', Bm - 1.2, 0.9, hz1 - hz0, Bm / 2, YD + 0.45, (hz0 + hz1) / 2);
+      const pal = ['#a8583f', '#3d5f8c', '#3f8580', '#c99a3c', '#858c93', '#56794f', '#e4e2da', '#7d3f45', '#34435f', '#c47440'];
+      for (let r = 0; r < 3; r++) {
+        const xr = Bm / 2 + (r - 1) * 2.54;
+        let z = hz0 + 0.2;
+        while (z < hz1 - 6.2) {
+          const len = z + 12.4 < hz1 && rnd() < 0.5 ? 12.19 : 6.06, t = 1 + (rnd() < 0.55 ? 1 : 0);
+          for (let k = 0; k < t; k++) {
+            const cc = pal[Math.floor(rnd() * pal.length)];
+            pbox(B, 'paint', cc, 2.44, 2.56, len - 0.05, xr, YD + 0.9 + 2.6 * k + 1.28, z + len / 2);
+            pbox(B, NS('paint'), shade(cc, 0.72), 2.46, 0.1, len - 0.03, xr, YD + 0.9 + 2.6 * k + 0.05, z + len / 2);
+            pbox(B, NS('paint'), shade(cc, 0.78), 2.46, 2.4, 0.06, xr, YD + 0.9 + 2.6 * k + 1.3, z + len);
+          }
+          z += len + 0.12;
+        }
+      }
+      // wheelhouse + accommodation at the −Z end: deckhouse, raised wheelhouse on a column, mast, radar, lights
+      const az = -L / 2 + 3.0;
+      B.box('paint', K.white, Bm - 1.6, 2.4, 4.6, Bm / 2, YD + 1.2, az, { r: 0.08 });
+      for (const f of [1, -1]) pbox(B, NS('glow'), '#ffe6b8', 0.03, 0.5, 3.4, Bm / 2 + f * (Bm / 2 - 0.79), YD + 1.5, az, { glow: 0.9 });
+      B.cyl('paint', K.white, 0.5, 3.0, Bm / 2 + 1.5, YD + 3.9, az + 0.6, { seg: 12 });
+      B.box('paint', K.white, 3.4, 2.0, 2.4, Bm / 2 + 1.5, YD + 6.3, az + 0.6, { r: 0.08 });
+      pbox(B, NS('gloss'), K.glass, 3.2, 0.8, 0.04, Bm / 2 + 1.5, YD + 6.6, az + 1.82);
+      pbox(B, NS('gloss'), K.glass, 0.04, 0.8, 2.0, Bm / 2 + 1.5 - 1.71, YD + 6.6, az + 0.6);
+      pbox(B, 'paint', '#c9453b', 3.6, 0.2, 2.6, Bm / 2 + 1.5, YD + 7.4, az + 0.6);
+      B.cyl('metal', K.galv, 0.06, 2.4, Bm / 2 + 1.5, YD + 8.6, az + 0.6, { seg: 6 });
+      pbox(B, NS('paint'), K.charcoal, 1.4, 0.1, 0.2, Bm / 2 + 1.5, YD + 9.2, az + 0.6);
+      B.blink('#ff4030', Bm / 2 + 1.5, YD + 9.9, az + 0.6, { size: 0.1, rate: 0.5, lo: 0.3, hi: 5 });
+      // name + registration on the quay side, bow and stern
+      B.push(-0.1, 0, -L / 2 + 8.5, -HP); letters(B, o.name ?? 'EBB RUNNER', { h: 0.7, x: 0, y: YD - 0.95, z: 0, c: K.white, flat: true, wt: 0.2, track: 0.14 }); B.pop();
+      B.push(Bm / 2, 0, -L / 2 - 0.01, PI); letters(B, (o.name ?? 'EBB RUNNER') + ' · INKOPOLIS', { h: 0.34, x: 0, y: YD - 0.7, z: 0, c: K.white, flat: true, wt: 0.22 }); B.pop();
+      // bitts, tyre fenders on the quay side, mooring lines to the quay bollards
+      for (const fz of [-L / 2 + 3, -L / 2 + 10, L / 2 - 10, L / 2 - 3]) {
+        B.tor('paint', K.rubber, 0.36, 0.14, -0.14, YD - 0.4, fz, { rs: 6, ts: 12, ry: HP });
+        rope(B, [0.2, YD + 0.2, fz], [-0.05, YD - 0.1, fz], 0.05, 0.02, K.charcoal);
+      }
+      for (const [bz, qz] of o.lines ?? [[-L / 2 + 1.2, -L / 2 - 4], [-2, -3], [L / 2 - 1.5, L / 2 + 3]]) {
+        bollardPair(B, 0.9, YD, bz, HP);
+        rope(B, [0.9, YD + 0.5, bz], [-gap - 0.55, 0.55, qz], 0.35, 0.045);
+      }
+      B.col(0, SEA - 1, -L / 2, Bm, YD + 0.9 + 5.2, L / 2, { roof: true });
+      B.col(Bm / 2 - 0.2, YD, az - 0.6, Bm / 2 + 3.2, YD + 7.5, az + 1.8, { roof: true });
+    },
+  };
+
 }
 
 
@@ -1738,14 +2117,18 @@ function autoDressing() {
 }
 
 const Q = P / 4;
-const LOCAL_PLACEMENTS = [
+const DZ = STRETCH.d;
+// The berth's dressing as it stood before the Long Stages stretch: every placement beyond the cut (layout.js
+// beyondCut: the base end, the reefer-side depot) moves DZ toward the base with it; `final` ones are already drawn at
+// their stretched place (the runs that cross the cut: crane rails, quay edges along the aprons)
+const BERTH_PLACEMENTS = [
   // K7 at mid, idle between the two berths with its boom raised; the two ships alongside, bows pointing at mid
   { type: 'cargo_crane', pos: [0, 0, 0], rotY: 0, mirror: false, boom: 80 },
   { type: 'cargo_ship', pos: [27.5, 0, -14], rotY: 0, mirror: false, name: 'TIDEBANK', line: 'TIDEBANK', hull: '#2e3f5c', boot: '#a3453a', seed: 11 },
   { type: 'cargo_ship', pos: [-27.5, 0, 14], rotY: P, mirror: false, name: 'CORAL MAXIMA', line: 'CORAL MAX', hull: '#3c4650', boot: '#35598a', seed: 23 },
   // crane rails along both aprons (the gate-side one stops at the water slot; the mirror copies run the Bravo half)
-  { type: 'cargo_rail', pos: [21, 0, -41], rotY: -P / 2, length: 41, stop: true },
-  { type: 'cargo_rail', pos: [-21, 0, -46.2], rotY: -P / 2, length: 46.2, stop: true },
+  { type: 'cargo_rail', pos: [21, 0, -41 - DZ], rotY: -P / 2, length: 41 + DZ, stop: true, final: true },
+  { type: 'cargo_rail', pos: [-21, 0, -46.2 - DZ], rotY: -P / 2, length: 46.2 + DZ, stop: true, final: true },
   // the terminal beyond the back wall (visual) + the next crane along the quay, working the far end of each ship
   { type: 'cargo_backyard', pos: [0, 0, -48], rotY: 0, seed: 5 },
   { type: 'cargo_crane', pos: [0, 0, -64], rotY: 0, trolley: 40, num: 'K6', coarse: true },
@@ -1764,12 +2147,12 @@ const LOCAL_PLACEMENTS = [
   // bollards on the long ship-side edge. Runs go along local +X with the water on local +Z.
   { type: 'cargo_quayedge', pos: [20.6, 0, -41], rotY: P / 2, length: 6.4 },                                   // water slot, inner side
   { type: 'cargo_quayedge', pos: [24, 0, -41], rotY: P, length: 3.4 },                                         // water slot, head
-  { type: 'cargo_quayedge', pos: [24, 0, -14], rotY: P / 2, length: 27, bollards: [4, 14, 24], fenders: [9, 19], ladders: [16.5] },
+  { type: 'cargo_quayedge', pos: [24, 0, -14], rotY: P / 2, length: 27 + DZ, bollards: [4, 14, 24, 34, 44], fenders: [9, 19, 29, 39], ladders: [16.5, 38.5], final: true },
   { type: 'cargo_quayedge', pos: [30, -0.1, -8], rotY: 3 * Q, length: 8.485, bollards: [4.2] },               // mid bulge shoulder
   { type: 'cargo_quayedge', pos: [30, 0, 0], rotY: P / 2, length: 8, bollards: [4], fenders: [6.5] },          // mid bulge face
   { type: 'cargo_quayedge', pos: [-30, 0, -8], rotY: -P / 2, length: 8, bollards: [4], fenders: [1.5] },
   { type: 'cargo_quayedge', pos: [-24, -0.1, -14], rotY: -3 * Q, length: 8.485, bollards: [4.2] },
-  { type: 'cargo_quayedge', pos: [-24, 0, -22], rotY: -P / 2, length: 8, fenders: [4] },
+  { type: 'cargo_quayedge', pos: [-24, 0, -22 - DZ], rotY: -P / 2, length: 8 + DZ, bollards: [5, 15, 25], fenders: [10, 20, 27], ladders: [12.5], final: true },
   // the reefer-side wing (stepped outline)
   { type: 'cargo_quayedge', pos: [-29.5, 0, -22], rotY: 0, length: 5.5, bollards: [2.7] },
   { type: 'cargo_quayedge', pos: [-29.5, 0, -27], rotY: -P / 2, length: 5 },
@@ -1832,8 +2215,47 @@ const LOCAL_PLACEMENTS = [
   { type: 'cargo_signboard', pos: [-16.9, 0, -33.0], rotY: 0.6, variant: 1 },
   // reefer technicians' cabin in the reefer corner (fittings on the front of the reefer yard box)
   { type: 'cargo_cabin', pos: [-14.41, 0, -44.86], rotY: 0, w: 6.06, sign: 'REEFER TECH' },
-  ...autoDressing(),
 ];
+const moved = (it) => { if (it.final) { const { final, ...q } = it; return q; } return { ...it, pos: [it.pos[0], it.pos[1], stretchZ(it.pos[0], it.pos[2])] }; };
+
+// ==================================================================================================== the slice
+// (final coordinates: layout.js SLICE — cross aisle C, Block 4B, the RTG lane + transfer platform, the lashing store)
+const T = SLICE.tp, ST = SLICE.store, TPZ = (T.z[0] + T.z[1]) / 2;
+const SLICE_PLACEMENTS = [
+  // RTG 41 parked across the lane over the transfer platform; the platform's dressing (booth, rack, rails, boards)
+  { type: 'cargo_rtg', pos: [0, 0, SLICE.rtg.z], rotY: 0, xl: SLICE.rtg.x, sill: SLICE.rtg.sill, tx: 5.4 },
+  { type: 'cargo_tp', pos: [0, 0, TPZ], rotY: 0, w: T.x * 2, d: T.z[1] - T.z[0], h: T.y, sw: T.w },
+  // the lashing store + its dock, the weighbridge office in its yard facing the lane, a forklift, cages
+  { type: 'cargo_store', pos: [(ST.x[0] + ST.x[1]) / 2, 0, (ST.z[0] + ST.z[1]) / 2], rotY: 0, w: ST.x[1] - ST.x[0], d: ST.z[1] - ST.z[0], h: ST.h, dk: ST.dock - ST.x[1] },
+  { type: 'cargo_wbhut', pos: [-14.6, 0, -39.9], rotY: P / 2 },
+  { type: 'cargo_cage', pos: [-12.0, 0, -41.7], rotY: 0.1, variant: 1 },
+  { type: 'cargo_forklift', pos: [-20.6, 0, -45.6], rotY: 0.35 },   // (parked on the quay beside the store, clear of the dock steps)
+  // the stacked hatch covers on the ship-side quay; folded flat racks + a barge on the reefer side
+  { type: 'cargo_hatch', pos: [18.6, 0, -47.7], rotY: 0, w: 3.4, d: 7.0, h: 1.2, num: '9' },
+  { type: 'cargo_hatch', pos: [18.6, 0, -48.1], rotY: 0, w: 2.2, d: 3.6, h: 1.2, y0: 1.2, c: '#58779a' },
+  { type: 'cargo_flatstack', pos: [-21.08, 0, -37.17], rotY: 0 },
+  { type: 'cargo_barge', pos: [-24.9, 0, -29.6], rotY: P, length: 27, beam: 9.4, gap: 0.9, name: 'EBB RUNNER', seed: 31,
+    lines: [[12.0, 10.4], [1.5, 0.4], [-12.3, -9.6]] },   // (barge-local z: the quay bollards at local z −40, −30, −20)
+  // cross aisle C: cones round the platform's stair foot, barriers, a lashing cage + twistlock bins at the aisle ends
+  { type: 'cone', pos: [-2.3, 0, -33.3] }, { type: 'cone', pos: [2.5, 0, -33.0] }, { type: 'cone', pos: [5.4, 0, -34.2] },
+  { type: 'barrier', pos: [3.9, 0, -36.3], rotY: 0, worldRot: true, variant: 1, length: 2.4 },
+  { type: 'cargo_cage', pos: [22.3, 0, -34.2], rotY: P / 2 },
+  { type: 'cargo_cage', pos: [-17.3, 0, -35.9], rotY: 0.1, variant: 1 },
+  { type: 'cargo_cage', pos: [10.6, 0, -35.8], rotY: -0.15, variant: 1 },
+  // quay kit: light towers, rope coils, a life ring
+  { type: 'cargo_lighttower', pos: [-19.6, 0, -50.2], rotY: 0.2 },
+  { type: 'cargo_lighttower', pos: [22.0, 0, -41.6], rotY: -0.3 },
+  { type: 'ropecoil', pos: [22.8, 0, -48.4], rotY: 1.1 },
+  { type: 'ropecoil', pos: [-22.9, 0, -41.0], rotY: 0.3 },
+  { type: 'lifering', pos: [23.55, 0, -44.8], rotY: -P / 2 },
+  { type: 'lifering', pos: [-23.55, 0, -26.5], rotY: P / 2 },
+  { type: 'cargo_signboard', pos: [6.9, 0, -52.9], rotY: 0.15, variant: 1 },
+  // block ids where the stacks meet cross aisle C (4A's base end, 4B's mid end), read along the aisle
+  { type: 'cargo_blocksign', pos: [16.45, 0, -32.3], rotY: P / 2, text: '4A' },
+  { type: 'cargo_blocksign', pos: [16.45, 0, -36.6], rotY: P / 2, text: '4B' },
+];
+
+const LOCAL_PLACEMENTS = [...BERTH_PLACEMENTS.map(moved), ...SLICE_PLACEMENTS, ...autoDressing()];
 
 // turn the berth: pos about the origin, rotY + ROT (see the note above). oboxCols: a turned prop hands the level
 // colliders turned with it (PropKit._xfCols) instead of world-axis boxes that would swell past the real shape.

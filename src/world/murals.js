@@ -60,6 +60,7 @@ export async function createMuralTexture(stageId = 'halyard') {
   tex.userData.setStage = (id) => {
     if (id === cur) return;
     cur = id;
+    tex.userData.stage = id;   // (which stage the region holds: a check for tests)
     g.clearRect(STAGE_R.x, STAGE_R.y, STAGE_R.w, STAGE_R.h);
     const murals = [0, 1, 2, 3].map((k) => ({ rect: [0, 1, 1 - (k + 1) * RH / H, RH / H], place: [0, -8, 0, 0], fx: [0, 0] }));
     let list = [];

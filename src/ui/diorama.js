@@ -53,6 +53,8 @@ const ARROW = `<svg viewBox="-16 -16 32 32" aria-hidden="true"><path d="M0 -12 L
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 // Zone Control tag icon (the HUD's zone box): fill = currentColor
 const ZONE_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="7" width="18" height="18" rx="3.5" fill="currentColor" stroke="${K}" stroke-width="3"/><path d="M3.5 11 V6 a2.5 2.5 0 0 1 2.5 -2.5 H11 M21 3.5 H26 a2.5 2.5 0 0 1 2.5 2.5 V11 M28.5 21 V26 a2.5 2.5 0 0 1 -2.5 2.5 H21 M11 28.5 H6 a2.5 2.5 0 0 1 -2.5 -2.5 V21" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg>`;
+// Tower Command tag icon (the HUD's tower): fill = currentColor
+const TOWER_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="14.6" y="7" width="2.8" height="14" fill="#fff" stroke="${K}" stroke-width="2"/><circle cx="16" cy="7" r="3.3" fill="currentColor" stroke="${K}" stroke-width="2.4"/><path d="M4.5 20 h23 l-2.6 7.5 h-17.8 z" fill="currentColor" stroke="${K}" stroke-width="3" stroke-linejoin="round"/></svg>`;
 const NPIN = 11;          // 0–2 allies, 3 base, 4 you, 5–10 team Hop Beacons
 const beaconsOf = (team) => (G.subs ? G.subs.beaconsFor(team).sort((x, y) => x.born - y.born) : []);
 
@@ -145,7 +147,8 @@ export class DioramaOverlay {
       let tgt = null, ok = false, label = '', st = '', dead = false, weapon = null;
       if (i >= 5) {
         const b = beacons[i - 5];
-        if (b) { tgt = b.pos; ok = true; label = 'BEACON'; st = b.uses > 1 ? '×' + b.uses : ''; }
+        // (its jumps left as lights, like the ones over the beacon: ●● fresh, ●○ its last jump)
+        if (b) { tgt = b.pos; ok = true; label = 'BEACON'; st = '●'.repeat(Math.max(0, b.uses)) + '○'.repeat(Math.max(0, (b.sub?.uses || 2) - b.uses)); }
         p.target = b || null;
         p.queued = !!(q && b && q.kind === 'beacon' && q.target === b);
       } else if (i < 3) {
@@ -193,6 +196,7 @@ export class DioramaOverlay {
       }
     }
     this._zones(cam, W, H, me);
+    this._tower(cam, W, H, me);
     this._deathMarks(cam, W, H);
     if (planning) this._plan(me, q);
     // ---- map cursor (pointer stays locked in play: steer with mouse deltas / right stick; snaps to pins)
@@ -337,6 +341,25 @@ export class DioramaOverlay {
       tg.el.classList.toggle('is-held', active && held);
       tg.el.classList.toggle('is-icon', !label);
     }
+  }
+
+  // Tower Command: one tag over the tower, in the ink of the team in control (warm yellow while neutral)
+  _tower(cam, W, H, me) {
+    const T = G.match && !G.match.attract ? G.match.tower : null;
+    if (!this.ttag) {
+      const label = h('span', { class: 'iw-dio-z__l' }, 'TOWER');
+      this.ttag = { el: h('div', { class: 'iw-dio-z is-active is-held' }, h('span', { class: 'iw-dio-z__tag' }, h('i', { class: 'iw-dio-z__i', html: TOWER_ICON }), label)), label, vis: true, col: '' };
+      this.zLayer.appendChild(this.ttag.el);
+    }
+    const tg = this.ttag;
+    if (T) _v.set(T.pos.x, T.top + 1.4, T.pos.z).project(cam);
+    if (!T || _v.z > 1) { if (tg.vis) { tg.vis = false; tg.el.style.display = 'none'; } return; }
+    if (!tg.vis) { tg.vis = true; tg.el.style.display = ''; }
+    tg.el.style.transform = `translate3d(${((_v.x * 0.5 + 0.5) * W).toFixed(1)}px,${((0.5 - _v.y * 0.5) * H).toFixed(1)}px,0)`;
+    const col = T.owner >= 0 ? (G.teamHex?.[T.owner] || '#fff') : '#ffd54a';
+    if (col !== tg.col) { tg.col = col; tg.el.style.setProperty('--zc', col); }
+    const txt = T.owner < 0 ? 'TOWER' : T.owner === me?.team ? 'OUR TOWER' : 'THEIR TOWER';
+    if (tg.label.textContent !== txt) tg.label.textContent = txt;
   }
 
   _jump(i, me) {

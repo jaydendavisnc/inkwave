@@ -6,13 +6,22 @@
 //   'blade,blade,shooter,…' (per slot, blank = keep) · unset = the usual random loadouts.
 //   TRACK=<weapon> (+ TRACK_TEAM=0|1): a closer look at the players on that weapon (see trk below).
 //   TUNE='mitts.punchInterval=0.12,mitts.punchDamage=45': what-if tuning for this run only (WEAPONS / SUBS values).
+//   SPECIAL_AI=0 turns the bots' awareness of enemy specials off (src/game/botSpecials.js; an A/B on the same code),
+//   team0 / team1: on for that team only (head to head); unset: as shipped.
+//   SPCHARGE=3: the special gauge fills 3× as fast (PLAYER.specialChargeRate; this run only) — more specials per match.
+//   DIAG=1: every stuck episode also records the bot's nav plan, snapshotted at its start and every 5 s after: mode,
+//   route length, pi, the next two route nodes, the edge into the next one (nav.edge: 'none' when there's no such
+//   edge — e.g. after the stuck recovery skipped a waypoint), the goal node, noProg, the nearest nav node, and the wall
+//   climb it's at (if any). RESULT_JSON.diagEps lists every episode of 2 s or more with them (longest first).
 // Reports: stuck %, splats (by cause), per-weapon splats / deaths / turf, specials, super jumps, console errors, sim
 // cost, and in Zone Control the objective stats. Last line: RESULT_JSON {…} (also written to OUT if set).
 const { app } = require('electron');
 require(process.env.S + '/offscreen-boot.cjs');
+const { TEST_MAPS, defineTestMap } = require(process.env.S + '/testmaps.cjs');
 const MAP = process.env.MAP || 'halyard', MODE = process.env.MODE || 'zones', SECS = +(process.env.SECS || 180);
 const OUT = process.env.OUT || '';
 const WEAPONS = process.env.WEAPONS || '', SUBS = process.env.SUBS || '', TRACK = process.env.TRACK || '', TRACK_TEAM = process.env.TRACK_TEAM ?? '', TUNE = process.env.TUNE || '';
+const SPECIAL_AI = process.env.SPECIAL_AI || '', SPCHARGE = +(process.env.SPCHARGE || 1), DIAG = process.env.DIAG === '1';
 setTimeout(() => { console.log('WATCHDOG'); app.exit(1); setTimeout(() => process.exit(1), 3000); }, +(process.env.WATCHDOG || 900000));   // (hard exit if a hung page blocks quitting)
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let claimed = false;
@@ -28,7 +37,9 @@ app.on('browser-window-created', (_, win) => {
     const js = (c) => win.webContents.executeJavaScript(c, true);
     for (let i = 0; i < 120; i++) { if (await js('!!window.__inkwave?.api')) break; await wait(250); }
     await js('window.__inkwave._onPointerUnlock = () => {}; 0');
+    if (TEST_MAPS.includes(MAP)) await js(defineTestMap(MAP));   // (MAP=testbox / podbox: test-only arenas, testmaps.cjs)
     await js(`window.__inkwave.api.startMatch({ mapId: '${MAP}', mode: '${MODE}', duration: ${MODE === 'zones' ? 300 : SECS} })`);
+    { const got = await js(`(window.__inkwave.mapDef && window.__inkwave.mapDef.id) || null`); if (got !== MAP) { console.log(`MAP MISMATCH: asked for ${MAP}, the game built ${got} (a stage missing from MAPS falls back to the first one)`); app.exit(3); return; } }   // (never test the wrong stage silently)
     for (let i = 0; i < 240; i++) { if (await js(`window.__inkwave.match?.state === 'playing'`)) break; await wait(250); }
     // what-if tuning (TUNE, see the header): patched into the live config before the loadouts
     const tuned = TUNE ? await js(`(async () => { const C = await import('./src/config.js'); const out = [];
@@ -45,6 +56,11 @@ app.on('browser-window-created', (_, win) => {
       A.forEach((a, i) => { if (W[i]) a.setWeapon(W[i]); if (S[i]) a.setSub(S[i]); });
       return A.map((a) => 'AB'[a.team] + ':' + a.weaponId + '+' + (a.subId || '-')).join(' ');
     })()`);
+    // enemy-specials awareness switch (SPECIAL_AI, see the header; a checkout without it just reports 'n/a')
+    const spAI = await js(`(async () => { try { const M = await import('./src/game/botSpecials.js'), S = M.SPECIAL_AI, v = ${JSON.stringify(SPECIAL_AI)};
+      if (v === '0') S.enabled = false; else if (v === 'team0') S.teams = [true, false]; else if (v === 'team1') S.teams = [false, true];
+      M.resetSpecialStats(); return S.enabled ? (S.teams ? 'team' + S.teams.indexOf(true) : 'on') : 'off'; } catch (e) { return 'n/a'; } })()`);
+    if (SPCHARGE !== 1) await js(`(async () => { const C = await import('./src/config.js'); C.PLAYER.specialChargeRate *= ${SPCHARGE}; return 0; })()`);
     const t0 = Date.now();
     const r = await js(`(async () => {
       const g = window.__inkwave, m = g.match, Z = m.zones, N = __G.nav;
@@ -57,8 +73,18 @@ app.on('browser-window-created', (_, win) => {
         on('zones:active', (e) => ev.active.push(e.objective)),
         on('zones:overtime', (e) => { ev.overtime = e.losing; }),
         on('zones:end', (e) => { ev.end = { winner: e.winner, reason: e.reason }; }),
-        on('special:use', () => ev.specials++),
+        on('special:use', (e) => { ev.specials++; const U = ev.uses || (ev.uses = [{}, {}]), id = /^barrage/.test(String(e.id)) ? 'barrage' : String(e.id); if (e.actor) U[e.actor.team][id] = (U[e.actor.team][id] || 0) + 1; }),
         on('superjump', (e) => { if (e.phase === 'charge') ev.jumps++; }),
+        on('special:end', (e) => { if (/^barrage/.test(String(e.id))) (ev.barEnd || (ev.barEnd = new Map())).set(e.actor, simT); }),
+        on('splatted', (e) => {
+          // splats by special, per victim team (Bomb Barrage: its thrower's bombs during it or within 3.5 s after), K / D per team
+          const SP = ['slam', 'storm', 'bubbler', 'sonar', 'strike', 'zooka', 'wail', 'kraken', 'blower', 'jetpack', 'stamp', 'booyah', 'zipcaster', 'crab'];
+          const c = String(e.cause || ''), at = e.attacker, v = e.victim;
+          const bar = /^(bomb|sticky|burst|seeker|mist)$/.test(c) && at && (at.specialActive?.kind === 'barrage' || simT - ((ev.barEnd && ev.barEnd.get(at)) ?? -99) < 3.5);
+          const sp = SP.includes(c) ? c : bar ? 'barrage' : null;
+          if (v) { const T = ev.team || (ev.team = [{ k: 0, d: 0, sp: 0, by: {} }, { k: 0, d: 0, sp: 0, by: {} }]); T[v.team].d++; if (at && at !== v && at.team !== v.team) T[at.team].k++;
+            if (sp) { T[v.team].sp++; T[v.team].by[sp] = (T[v.team].by[sp] || 0) + 1; } }
+        }),
         on('splatted', (e) => { const W = ev.byW || (ev.byW = {}), C = ev.byCause || (ev.byCause = {});
           const aw = e.attacker && e.attacker.weaponId, vw = e.victim && e.victim.weaponId;
           if (aw && e.attacker !== e.victim) (W[aw] || (W[aw] = { splats: 0, deaths: 0 })).splats++;
@@ -72,6 +98,15 @@ app.on('browser-window-created', (_, win) => {
       const eps = []; let holdS = 0; const roleS = {}; const frameErr = { n: 0, msg: '' }; const where = {}; let whereN = 0; const whereT = [{}, {}]; const farMode = {}; let ready = 0;
       offs.push(on('special:ready', () => ready++));
       const open = new Map();
+      // DIAG=1: the bot's nav plan now (see the header)
+      const r2 = (v) => Math.round(v * 100) / 100, ndP = (id) => { const n = id >= 0 && N.nodes[id]; return n ? [n.x, r2(n.y), n.z] : null; };
+      const plan = ${DIAG} ? (a) => {
+        const b = a.bot, p = b.path, pi = b.pi | 0, e = p && pi > 0 && pi < p.length ? N.edge(p[pi - 1], p[pi]) : null;
+        const cl = b._clE ? { wall: b._clE.wallP.map(r2), topY: r2(b._clE.topY), t: r2(b.climbT || 0), noHeadway: r2(b.t - (b._clT ?? b.t)) } : null;
+        return { t: +simT.toFixed(1), mode: b.mode, pos: [r2(a.pos.x), r2(a.pos.y), r2(a.pos.z)], len: p ? p.length : 0, pi, next: p ? [ndP(p[pi]), ndP(p[pi + 1])] : null,
+          edgeIn: !p || pi <= 0 || pi >= p.length ? '-' : e ? e.type : 'none', goal: ndP(b.goal), noProg: r2(b.noProg || 0), near: ndP(N.nearest(a.pos, 1.2, true)),
+          noClimb: b.t < (b.noClimbUntil || 0), climbing: !!a.climbing, climb: cl, ink: Math.round(a.ink) };
+      } : null;
       // TRACK=<weapon id>: a closer look at every player on that weapon (damage in / out and from how far, what they were
       // doing when splatted, how far the nearest enemy was; the mitts add fist / splash / landing damage and leaps)
       const trk = ${JSON.stringify(TRACK)} ? (() => {
@@ -143,6 +178,38 @@ app.on('browser-window-created', (_, win) => {
         });
         return { sample, done };
       })() : null;
+      // sight honesty (per 0.25 s, every bot in a fight): its target in plain sight (a ray from its eyes to the foe's
+      // chest or head, through grates and rails), the trigger held at a foe out of sight ("shooting at nothing"), and its
+      // aim still on a foe out of sight (tracking through walls) — ground truth, whatever the bot believes
+      const SG = { fight: 0, fire: 0, hid: 0, blind: 0, onHid: 0, blindHid: 0, bBel: 0, bChg: 0 };
+      const V = () => ({ x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } }), _e = V(), _t = V();
+      const sightSample = () => {
+        for (const a of m.actors) {
+          const b = a.bot, t = b && b.target;
+          if (!a.alive || !b || b.mode !== 'fight' || !t || !t.alive || !t.pos || t.team === a.team) continue;
+          SG.fight += 0.25;
+          _e.set(a.pos.x, a.pos.y + 1.3, a.pos.z);
+          const sq = t.form === 'squid';
+          const vis = __G.physics.los(_e, _t.set(t.pos.x, t.pos.y + (sq ? 0.3 : 1.0), t.pos.z)) || (!sq && __G.physics.los(_e, _t.set(t.pos.x, t.pos.y + 1.6, t.pos.z)));
+          const fire = !!a.intent.fire;
+          if (fire) SG.fire += 0.25;
+          if (vis) continue;
+          SG.hid += 0.25;
+          // (why: the bot still believes it's in sight — its last look; holding a charge — not a shot; else a shot)
+          if (fire) { SG.blind += 0.25; if (b.seeTimer > 0) SG.bBel += 0.25; else if (a.weaponRunner && a.weaponRunner.charging) SG.bChg += 0.25; }
+          let d = Math.atan2(t.pos.x - a.pos.x, t.pos.z - a.pos.z) - b.aimYaw; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+          if (Math.abs(d) < 0.2) { SG.onHid += 0.25; if (fire) SG.blindHid += 0.25; }
+        }
+      };
+      // the bots' own cost: BotBrain.update wall time (ms per simulated second)
+      const BM = await import('./src/game/bots.js'), BP = BM.BotBrain.prototype, bUpd = BP.update; let botMs = 0;
+      BP.update = function (dt) { const q = performance.now(); try { return bUpd.call(this, dt); } finally { botMs += performance.now() - q; } };
+      // (and the part of it spent looking: _perceive, plus botSight's between-looks target re-check where there is one)
+      let seeMs = 0; const bPer = BP._perceive, SP = await import('./src/game/botSight.js').then((m) => m.Sight.prototype).catch(() => null), bRe = SP && SP.recheck;
+      BP._perceive = function () { const q = performance.now(); try { return bPer.call(this); } finally { seeMs += performance.now() - q; } };
+      if (bRe) SP.recheck = function (e) { const q = performance.now(); try { return bRe.call(this, e); } finally { seeMs += performance.now() - q; } };
+      if (BM.SIGHT_STATS) for (const k in BM.SIGHT_STATS) BM.SIGHT_STATS[k] = 0;   // (this match only, not the menu's)
+      if (BM.CLIMB_STATS) for (const k in BM.CLIMB_STATS) BM.CLIMB_STATS[k] = 0;
       const DT = 1 / 60, CH = 15;           // 0.25 s per chunk
       // per activation of an objective: the best ink share each team reached on each of its zones
       const wins = []; let curW = null;
@@ -160,6 +227,7 @@ app.on('browser-window-created', (_, win) => {
         g._skipRender = false;
         simT += CH * DT;
         if (trk && m.state === 'playing') trk.sample();
+        if (m.state === 'playing') sightSample();
         // --- zone metrics
         if (Z && m.state === 'playing') {
           noteShares();
@@ -188,7 +256,10 @@ app.on('browser-window-created', (_, win) => {
           const h = hist.get(a) || []; hist.set(a, h);
           h.push({ t: simT, x: a.pos.x, z: a.pos.z });
           while (h.length && simT - h[0].t > 3) h.shift();
-          const holding = !!(a.bot.zHoldUntil > a.bot.t && (!a.bot.path || a.bot.pi >= a.bot.path.length));   // a guard / watcher holding its spot on purpose
+          // a guard / watcher holding its spot on purpose; a bot fighting from a sprout pod's hedge top, or waiting out a
+          // hedge that cuts its only route (pods.js sets perchUntil — not while it's trying to get off); a bot inking a
+          // wall column to climb it, while the column's getting inked (bots.js _climb: not once it stalls)
+          const holding = !!((a.bot.zHoldUntil > a.bot.t && (!a.bot.path || a.bot.pi >= a.bot.path.length)) || a.bot.perchUntil > a.bot.t);
           if (holding && a.alive) holdS += 0.25;
           if (a.alive && a.bot.zRole) roleS[a.bot.zRole] = (roleS[a.bot.zRole] || 0) + 0.25;
           const wants = a.alive && !a.superJumpState && !(a.weaponRunner && a.weaponRunner.charging) && !holding;
@@ -197,13 +268,15 @@ app.on('browser-window-created', (_, win) => {
           const stuck = wants && h.length >= 11 && span < 1.0;
           if (stuck) {
             stuckS += 0.25;
-            if (!open.has(a)) { const b = a.bot; const ep = { t: +simT.toFixed(1), name: a.name, w: a.weaponId, mode: b.mode, role: b.zRole || '-', pos: [+a.pos.x.toFixed(1), +a.pos.y.toFixed(2), +a.pos.z.toFixed(1)], path: !!b.path, hold: b.zHoldUntil > b.t, dur: 0 }; open.set(a, ep); eps.push(ep); }
-            open.get(a).dur += 0.25;
+            if (!open.has(a)) { const b = a.bot; const ep = { t: +simT.toFixed(1), name: a.name, w: a.weaponId, mode: b.mode, role: b.zRole || '-', pos: [+a.pos.x.toFixed(1), +a.pos.y.toFixed(2), +a.pos.z.toFixed(1)], path: !!b.path, hold: b.zHoldUntil > b.t, pod: b.podS ? b.podS.task || (b.podS.exit ? 'exit' : '-') : '-', dur: 0 }; if (plan) ep.diag = [plan(a)]; open.set(a, ep); eps.push(ep); }
+            const ep = open.get(a); ep.dur += 0.25;
+            if (plan && ep.dur % 5 === 0) ep.diag.push(plan(a));
           } else open.delete(a);
         }
         if (chunk % 40 === 0) await new Promise((r) => setTimeout(r, 0));
       }
       const simMs = performance.now() - tSim0;
+      BP.update = bUpd; BP._perceive = bPer; if (bRe) SP.recheck = bRe;
       offs.forEach((f) => f());
       const st = Z ? Z.state() : null;
       const flips = ev.control.filter((c) => c.owner >= 0).length;
@@ -211,13 +284,24 @@ app.on('browser-window-created', (_, win) => {
       const res = {
         simT: +simT.toFixed(1), simMs: Math.round(simMs), state: m.state, stuckPct: +(100 * stuckS / Math.max(1, samples * 0.25)).toFixed(1),
         splats: m.events.length, water: m.events.filter((e) => e.cause === 'water').length, specials: ev.specials, jumps: ev.jumps, cov,
+        teamKD: ev.team || [{ k: 0, d: 0, sp: 0, by: {} }, { k: 0, d: 0, sp: 0, by: {} }],
+        spUses: ev.uses || [{}, {}],   // (specials used, per team, by special)
+        spStats: await (async () => { try { const M = await import('./src/game/botSpecials.js'); return JSON.parse(JSON.stringify(M.SPECIAL_STATS)); } catch (e) { return null; } })(),
         byCause: ev.byCause || {},
         byWeapon: (() => { const W = ev.byW || {}, out = {}; for (const a of m.actors) { const w = a.weaponId, o = out[w] || (out[w] = { n: 0, splats: 0, deaths: 0, turf: 0 }); o.n++; o.turf += a.stats.turf; }
           for (const w in out) { const o = out[w]; o.splats = (W[w] || {}).splats || 0; o.deaths = (W[w] || {}).deaths || 0; o.turf = Math.round(o.turf / o.n); } return out; })(),
 per: (() => { const A = m.actors, n = A.length || 1; const turf = A.reduce((s, a) => s + a.stats.turf, 0) / n, zt = A.reduce((s, a) => s + (a.stats.zoneTurf || 0), 0) / n, sp = A.reduce((s, a) => s + a.stats.splats, 0) / n;
           return { turf: Math.round(turf), zoneTurf: Math.round(zt), splats: +sp.toFixed(1), xpVar: Z ? Math.round(turf * 0.6 + zt + sp * 40) : Math.round(turf + sp * 40) }; })(),
-        frameErr, eps: eps.sort((a, b) => b.dur - a.dur).slice(0, 6), holdPct: +(100 * holdS / Math.max(1, samples * 0.25)).toFixed(1),
+        sight: { fightS: Math.round(SG.fight), fireS: Math.round(SG.fire), hidPct: +(100 * SG.hid / Math.max(1, SG.fight)).toFixed(1),
+          blindPct: +(100 * SG.blind / Math.max(1, SG.fire)).toFixed(1), trackPct: +(100 * SG.onHid / Math.max(1, SG.hid)).toFixed(1),
+          blindTrackPct: +(100 * SG.blindHid / Math.max(1, SG.fire)).toFixed(1), blindBelievedPct: +(100 * SG.bBel / Math.max(1, SG.fire)).toFixed(1),
+          blindChargePct: +(100 * SG.bChg / Math.max(1, SG.fire)).toFixed(1), blindShotPct: +(100 * (SG.blind - SG.bBel - SG.bChg) / Math.max(1, SG.fire)).toFixed(1), stats: BM.SIGHT_STATS ? { ...BM.SIGHT_STATS } : null },
+        botMsPerS: +(botMs / Math.max(1, simT)).toFixed(2), seeMsPerS: +(seeMs / Math.max(1, simT)).toFixed(2),
+        frameErr, eps: eps.sort((a, b) => b.dur - a.dur).slice(0, 6), diagEps: ${DIAG} ? eps.filter((e) => e.dur >= 2) : undefined,
+        climbs: BM.CLIMB_STATS ? { ...BM.CLIMB_STATS } : null, holdPct: +(100 * holdS / Math.max(1, samples * 0.25)).toFixed(1),
         roles: Object.fromEntries(Object.entries(roleS).map(([k, v]) => [k, +(100 * v / Math.max(1, samples * 0.25)).toFixed(0)])),
+        // sprout pods (src/game/pods.js): hedges grown per team, bot-seconds perched on tops / in cover, exits, detours, holds
+        pods: m.pods ? { ...m.pods.state().stats, perched: +(m.pods.stats.perched || 0).toFixed(1) } : null,
         track: trk ? trk.done() : undefined,
         // Boss Battle: HULLBREAKER's HP left and the squad's damage to it by weapon
         boss: m.boss ? { hpFrac: +(m.boss.hp / Math.max(1, m.boss.maxHp)).toFixed(3), maxHp: Math.round(m.boss.maxHp), dead: !!m.boss.dead, phase: m.boss.phase,
@@ -252,18 +336,23 @@ per: (() => { const A = m.actors, n = A.length || 1; const turf = A.reduce((s, a
     else console.log(`== ${MAP} [turf ${SECS}s]: turf ${r.cov.join('% vs ')}%`);
     console.log(`   roles (% of bot-time) ${JSON.stringify(r.roles)} | holding on purpose ${r.holdPct}%`);
     console.log(`   per bot: turf ${r.per.turf}p, on-zone ink ${r.per.zoneTurf}p, splats ${r.per.splats} → XP beyond the win/lose base ≈ ${r.per.xpVar}`);
+    if (r.pods) console.log(`   sprout pods: ${JSON.stringify(r.pods)}`);
     console.log(`   stuck ${r.stuckPct}% | splats ${r.splats} (water ${r.water}) | specials ${r.specials} | super jumps ${r.jumps} | turf ${r.cov.join('/')} | sim ${r.simT}s in ${(r.simMs / 1000).toFixed(0)}s (wall ${wallS}s) | ${JSON.stringify(perf)}`);
     if (MODE === 'zones') { console.log('   penalties ' + JSON.stringify(r.penalties)); console.log('   control log ' + r.log); console.log('   best shares per activation ' + r.windows); console.log('   reachable cells ' + r.reach); }
     console.log('   loadouts ' + equip + (tuned ? ' | TUNE ' + tuned : ''));
     console.log('   by weapon (players, splats dealt, deaths, avg turf) ' + Object.entries(r.byWeapon).map(([w, o]) => `${w}×${o.n} ${o.splats}/${o.deaths} ${o.turf}p`).join(' · '));
     console.log('   splats by cause ' + JSON.stringify(r.byCause));
-    for (const e of r.eps) console.log('   stuck ' + JSON.stringify(e));
+    { const T = r.teamKD; console.log(`   enemy specials AI ${spAI} | splatted by specials: A ${T[0].sp} ${JSON.stringify(T[0].by)} · B ${T[1].sp} ${JSON.stringify(T[1].by)} | K/D A ${T[0].k}/${T[0].d} B ${T[1].k}/${T[1].d}${r.spStats ? ' | ' + JSON.stringify(r.spStats) : ''}`); }
+    { const s = r.sight; console.log(`   sight: fighting ${s.fightS} bot-s, trigger held ${s.fireS} s | foe out of sight ${s.hidPct}% of fight time, aim still on it ${s.trackPct}% of that | shooting at nothing ${s.blindPct}% of trigger time (${s.blindTrackPct}% straight at the hidden foe; ${s.blindBelievedPct}% while it still thinks it sees it, ${s.blindChargePct}% a charge held, ${s.blindShotPct}% shots) | bots ${r.botMsPerS} ms per sim s (looking ${r.seeMsPerS})${s.stats ? ' | ' + JSON.stringify(s.stats) : ''}`); }
+    if (r.climbs) console.log('   wall climbs (at the wall): ' + JSON.stringify(r.climbs));
+    for (const e of DIAG ? [] : r.eps) console.log('   stuck ' + JSON.stringify(e));
+    if (DIAG) { console.log(`   DIAG: ${r.diagEps.length} stuck episode(s) of 2 s or more`); for (const e of r.diagEps) { const { diag, ...rest } = e; console.log('   stuck ' + JSON.stringify(rest)); for (const d of diag) console.log('      plan ' + JSON.stringify(d)); } }
     if (r.track) { const t = r.track; console.log(`   TRACK ${t.weapon}×${t.n} (team ${t.team}): ${t.kills} splats / ${t.deaths} deaths | damage out ${JSON.stringify(t.dmgOut)} in ${t.dmgIn} (armour saved ${t.armour}) | median dist: hits out ${t.distOut} m, hits in ${t.distIn} m, kills ${t.killDist} m, deaths ${t.deathDist} m`);
       console.log(`         died while ${JSON.stringify(t.deathState)} | by ${JSON.stringify(t.deathBy)} | ${t.deathClean} deaths without touching the killer | nearest enemy <4.5/<8/<14/far m: ${t.reach.join('/')}% | fighting ${t.fightS}s of ${t.aliveS}s alive | fired ${t.fired}${t.leaps ? ` | leaps ${t.leaps} ${JSON.stringify(t.leapKind)}, hit on landing ${t.leapHits}, landing kills ${t.leapKills}, clings ${t.clings}` : ''}`); }
     if (r.frameErr.n) console.log(`   FRAME ERRORS ${r.frameErr.n}: ${r.frameErr.msg}`);
     const uniq = [...new Set(logs)];
     console.log(`CONSOLE ${uniq.length} unique warning/error line(s)`); for (const l of uniq.slice(0, 20)) console.log('  ' + l);
-    r.map = MAP; r.mode = MODE; r.loadouts = equip; r.tune = tuned; r.consoleLines = uniq.length;
+    r.map = MAP; r.mode = MODE; r.loadouts = equip; r.tune = tuned; r.consoleLines = uniq.length; r.specialAI = spAI; r.spCharge = SPCHARGE;
     console.log('RESULT_JSON ' + JSON.stringify(r));
     if (OUT) require('fs').writeFileSync(OUT, JSON.stringify(r));
     app.quit();

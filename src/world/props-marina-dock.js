@@ -831,25 +831,31 @@ export function registerMarinaDock(D, H) {
     pbox(B, NS('paint'), K.white, 0.2, 0.06, 0.004, x, y + 0.075, 0.102);
     pbox(B, NS('metal'), K.stainless, 0.03, 0.08, 0.02, x + 0.12, y + 0.34, 0.105);
   }
-  // ---- fuel hut kit: dresses the `fuel-hut` block (w × d × h around pos), roof sign FUEL · ICE · BAIT with colliders
+  // ---- fuel hut kit: dresses the `fuel-hut` block (w × d × h around pos), roof sign FUEL · ICE · BAIT with colliders.
+  //      ramp (Tower Command): a timber ramp up the -Z wall onto a walkable roof ({ run, rise, w }: the ramp block's run
+  //      out from the wall, its rise = the roof, its width) — the -Z wall's fittings give way to it (the door moves round
+  //      to -X), the roof is cleared (no AC / vent) and the sign goes up on a gantry over it; the ramp gets its framing
   D.fuelhut = {
-    desc: 'Fuel-dock attendant hut dressing around a w × d × h block (pos = block base centre): door + awning (-Z), service hatch + awning (+Z), windows and FUEL PRICES boards (±X), roof trim, gutters + downpipes, double-sided FUEL · ICE · BAIT roof sign, rooftop AC and vent (roof pieces collide), extinguisher, NO SMOKING plates.',
-    params: { w: 'm (3.4)', d: 'm (3.7)', h: 'm (2.7)', diesel: '1.89', unleaded: '2.14' }, variants: 1, mount: 'ground',
+    desc: 'Fuel-dock attendant hut dressing around a w × d × h block (pos = block base centre): door + awning (-Z), service hatch + awning (+Z), windows and FUEL PRICES boards (±X), roof trim, gutters + downpipes, double-sided FUEL · ICE · BAIT roof sign, rooftop AC and vent (roof pieces collide), extinguisher, NO SMOKING plates. ramp: a lookout roof up a ramp on the -Z wall (the sign on a gantry over the roof, the door on -X, the ramp\'s cap stringers + posts).',
+    params: { w: 'm (3.4)', d: 'm (3.7)', h: 'm (2.7)', diesel: '1.89', unleaded: '2.14', ramp: '{ run, rise, w } (Tower Command lookout roof)' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
-      const W = o.w ?? 3.4, Dd = o.d ?? 3.7, Hh = o.h ?? 2.7;
+      const W = o.w ?? 3.4, Dd = o.d ?? 3.7, Hh = o.h ?? 2.7, ramp = o.ramp || null;
       const face = (side, fn) => { // side: 0 +Z, 1 +X, 2 -Z, 3 -X → local frame on that face (x along the face, z out)
         const ry = [0, HP, PI, -HP][side], off = side % 2 === 0 ? Dd / 2 : W / 2;
         B.push(Math.sin(ry) * off, 0, Math.cos(ry) * off, ry); fn(side % 2 === 0 ? W : Dd); B.pop();
       };
-      // roof trim + gutters, corner beads
+      // roof trim + gutters, corner beads (with a ramp, the -Z wall's trim stops either side of its landing)
       for (let side = 0; side < 4; side++) face(side, (L) => {
-        B.box('paint', K.fuelBlue, L + 0.12, 0.2, 0.06, 0, Hh - 0.02, 0.03, { r: 0.02 });
-        B.box('paint', K.white, L + 0.13, 0.035, 0.07, 0, Hh + 0.09, 0.03, { r: 0.012 });
+        const spans = ramp && side === 2 ? [[-(L + 0.13) / 2, -ramp.w / 2 - 0.02], [ramp.w / 2 + 0.02, (L + 0.13) / 2]] : [[-(L + 0.13) / 2, (L + 0.13) / 2]];
+        for (const [a, b] of spans) {
+          B.box('paint', K.fuelBlue, Math.min(b - a, L + 0.12), 0.2, 0.06, (a + b) / 2, Hh - 0.02, 0.03, { r: 0.02 });
+          B.box('paint', K.white, b - a, 0.035, 0.07, (a + b) / 2, Hh + 0.09, 0.03, { r: 0.012 });
+        }
         B.box('paint', mixc(K.white, K.concreteDk, 0.3), L + 0.02, 0.1, 0.04, 0, 0.05, 0.02, { r: 0.012 });
       });
       // -Z (spawn side): door with rolled awning, window, extinguisher, plates
-      face(2, (L) => {
+      if (!ramp) face(2, (L) => {
         doorUnit(B, -0.75, 0.86, 2.02, { frame: K.fuelBlueDk, leaf: K.fuelBlue });
         awningRolled(B, -0.75, 2.36, 1.1);
         windowUnit(B, 0.72, 1.0, 1.1, 0.95, { frame: K.white, mull: 1, blind: '#e6ddc8', lit: 0.8 });
@@ -865,9 +871,13 @@ export function registerMarinaDock(D, H) {
         B.decal('lb11', 0.52, 0.13, 0, 0.62, 0.012);
         B.decal('ferry', 0.45, 0.3, 1.25, 1.55, 0.012);
       });
-      // ±X: window + price board
+      // ±X: window + price board (with a ramp on -Z, the door comes round to the -X wall in the window's place)
       for (const side of [1, 3]) face(side, (L) => {
-        windowUnit(B, -0.95, 1.05, 0.9, 0.9, { frame: K.white, mull: 0, blind: '#e6ddc8', lit: 0.8 });
+        if (ramp && side === 3) {
+          doorUnit(B, -0.95, 0.86, 2.02, { frame: K.fuelBlueDk, leaf: K.fuelBlue });
+          awningRolled(B, -0.95, 2.36, 1.1);
+          B.decal('lb9', 0.3, 0.075, -0.95, 2.2, 0.075);
+        } else windowUnit(B, -0.95, 1.05, 0.9, 0.9, { frame: K.white, mull: 0, blind: '#e6ddc8', lit: 0.8 });
         B.push(0.72, 0, 0);
         B.box('gloss', K.fuelBlueDk, 1.3, 1.02, 0.05, 0, 1.52, 0.025, { round: true, r: 0.03 });
         B.box('gloss', K.white, 1.2, 0.2, 0.012, 0, 1.9, 0.052, { r: 0.01 });
@@ -885,6 +895,40 @@ export function registerMarinaDock(D, H) {
         B.cyl('paint', K.fuelBlueDk, 0.05, 0.12, L / 2 - 0.12, 0.06, 0.1, { rx: 0.9, seg: 8 });
         for (const yy of [0.7, 1.7]) pbox(B, 'metal', K.galvDk, 0.1, 0.03, 0.06, L / 2 - 0.12, yy, 0.03);
       });
+      if (ramp) {
+        // lookout roof: the double-sided sign up on a galvanised gantry over the middle of the roof (posts at the side
+        // edges, the board clear of a jumping kid's head), nothing else up there
+        const gy = Hh + 2.65, gz = 0.2;
+        for (const sx of [-1.52, 1.52]) {
+          B.box('metal', K.galvDk, 0.1, gy + 0.62 - Hh, 0.1, sx, (Hh + gy + 0.62) / 2, gz, { r: 0.02 });
+          B.box('metal', K.galvDk, 0.24, 0.02, 0.24, sx, Hh + 0.01, gz, { r: 0.006 });
+          B.col(sx - 0.07, Hh, gz - 0.07, sx + 0.07, gy + 0.62, gz + 0.07);
+        }
+        B.box('metal', K.galvDk, 3.1, 0.08, 0.08, 0, gy - 0.04, gz, { r: 0.02 });
+        B.box('gloss', K.fuelBlue, 3.2, 0.6, 0.1, 0, gy + 0.3, gz, { round: true, r: 0.04 });
+        B.box('paint', K.fuelYel, 3.2, 0.05, 0.11, 0, gy + 0.04, gz, { r: 0.015 });
+        for (const f of [1, -1]) {
+          B.push(0, 0, gz + f * 0.05, f > 0 ? 0 : PI);
+          letters(B, 'FUEL · ICE · BAIT', { h: 0.25, x: 0, y: gy + 0.18, z: 0.003, c: K.white, flat: true, wt: 0.2, track: 0.1, mat: 'glow', glow: 0.9 });
+          B.pop();
+        }
+        B.col(-1.62, gy, gz - 0.08, 1.62, gy + 0.62, gz + 0.08);
+        // the ramp's framing (outside its walking width, nothing on its surface): timber cap stringers along both top
+        // edges, framing posts down its boarded sides, a galvanised kick plate across its foot
+        const rw = ramp.w, run = ramp.run, rise = ramp.rise, z0 = -Dd / 2, L = Math.hypot(run, rise), pitch = Math.atan2(rise, run);
+        for (const sx of [-1, 1]) {
+          const x = sx * (rw / 2 + 0.05);
+          B.push(x, rise / 2, z0 - run / 2, 0, -pitch);   // (rising toward +z: the hut wall)
+          B.box('wood', '#8a6a4a', 0.1, 0.24, L + 0.06, 0, -0.12, 0, { r: 0.015 });
+          B.pop();
+          for (const t of [0.22, 0.5, 0.78]) {
+            const zz = z0 - run * t, yt = rise * (1 - t) - 0.03;
+            B.box(NS('wood'), '#7d5f42', 0.12, yt, 0.12, sx * (rw / 2 + 0.06), yt / 2, zz, { r: 0.015 });
+          }
+        }
+        pbox(B, 'metal', K.galvDk, rw, 0.012, 0.16, 0, 0.006, z0 - run + 0.06);
+        return;
+      }
       // roof: double-sided FUEL · ICE · BAIT sign on posts (collides), AC unit + vent (sub-props, collide)
       const sy = Hh, sz = -0.55;
       for (const sx of [-1.3, 1.3]) { B.box('metal', K.galvDk, 0.08, 0.36, 0.08, sx, sy + 0.18, sz, { r: 0.02 }); B.box('metal', K.galvDk, 0.2, 0.02, 0.2, sx, sy + 0.01, sz, { r: 0.006 }); }
@@ -1189,7 +1233,7 @@ export function registerMarinaDock(D, H) {
   // ---- harbour office kiosk: service window + awning + counter, notice board, door, HARBOUR OFFICE fascia, roof kit
   D.harbouroffice = {
     desc: 'Harbour-office kiosk dressing around a W × D × H block (pos = block base centre): service window with rolled awning, counter and bell on +X, HARBOUR OFFICE fascia letters, notice board with notices, door + window on +Z, window on -X, roof trim, antenna mast with blinking light + dish + flagpole (roof pieces collide).',
-    params: { w: 'm (4.8)', d: 'm (3.4)', h: 'm (2.8)' }, variants: 1, mount: 'ground',
+    params: { w: 'm (4.8)', d: 'm (3.4)', h: 'm (2.8)', label: 'fascia (HARBOUR OFFICE)' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
       const W = o.w ?? 4.8, Dd = o.d ?? 3.4, Hh = o.h ?? 2.8, trim = K.club;
@@ -1200,7 +1244,7 @@ export function registerMarinaDock(D, H) {
         B.cyl('metal', '#c9a24b', 0.04, 0.03, 0.2, 0.97, 0.08, { seg: 10 }); B.sph('metal', '#c9a24b', 0.035, 0.2, 0.995, 0.08, { ws: 8, hs: 4, half: true });
         awningRolled(B, -0.35, 2.3, 1.8, K.club, K.white);
         B.box('gloss', K.white, L - 0.3, 0.34, 0.04, 0, Hh - 0.3, 0.02, { round: true, r: 0.03 });
-        letters(B, 'HARBOUR OFFICE', { h: 0.16, x: 0, y: Hh - 0.38, z: 0.043, c: K.club, flat: true, wt: 0.22, track: 0.14 });
+        letters(B, o.label ?? 'HARBOUR OFFICE', { h: 0.16, x: 0, y: Hh - 0.38, z: 0.043, c: K.club, flat: true, wt: 0.22, track: 0.14 });
         // notice board: framed cork with pinned notices + ferry times
         B.box('wood', 'wooddark', 0.95, 0.75, 0.05, 1.35, 1.45, 0.025, { r: 0.015 });
         pbox(B, 'paint', '#b98f62', 0.85, 0.65, 0.01, 1.35, 1.45, 0.052);
@@ -1401,9 +1445,10 @@ export function registerMarinaDock(D, H) {
   //      engine house, operator station; legs collide, beams are overhead (≥ 4.6 m clear everywhere)
   D.travellift = {
     desc: 'Boatyard travel lift (35 t): four blue box-section legs on yellow twin-tyre bogies (colliders), side beams at 5.4–6.1 m, rear cross beam with knee braces, four winch drums with cables and raised lifting slings, engine house with exhaust, operator console, HALYARD + SWL 35 T markings, hazard bands. Local: W 5.4 between leg centres (X), L 3.8 (Z), open at +Z.',
-    params: { w: 'leg span X (5.4)', l: 'leg span Z (3.8)' }, variants: 1, mount: 'ground',
+    params: { w: 'leg span X (5.4)', l: 'leg span Z (3.8)', hang: '{ y, hb, top, z: [z, z] }: slings down round a hull hanging in them (the strap bottom y, the hull half-beam, the sling tops, the stations)' }, variants: 1, mount: 'ground',
     build(B, o) {
-      const W = o.w ?? 5.4, L = o.l ?? 3.8, BY = 5.45, BH = 0.66, blue = K.liftBlue, yel = K.liftYel;
+      const W = o.w ?? 5.4, L = o.l ?? 3.8, BY = 5.45, BH = 0.66, blue = K.liftBlue, yel = K.liftYel, hang = o.hang || null;
+      const WZ = hang ? hang.z || [-1.5, 1.4] : [-1.0, 0.8];
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         const x = sx * W / 2, z = sz * L / 2;
         // bogie: frame + two big tyres
@@ -1427,13 +1472,25 @@ export function registerMarinaDock(D, H) {
         if (sx > 0) letters(B, 'SWL 35 T', { h: 0.1, x: -1.55, y: -0.2, z: 0.002, c: yel, flat: true, wt: 0.22 });
         B.pop();
         // winches + raised slings (straps sag between the side beams, lowest point ≥ 5.0 m)
-        for (const wz of [-1.0, 0.8]) {
+        for (const wz of WZ) {
           B.cyl('metal', K.galvDk, 0.2, 0.36, x - sx * 0.05, BY - 0.12, wz, { rz: HP, seg: 12 });
           B.cyl('metal', K.galv, 0.012, 0.3, x - sx * 0.05, BY - 0.42, wz, { seg: 4 });
         }
       }
-      for (const wz of [-1.0, 0.8]) {
+      for (const wz of WZ) {
         const pts = [];
+        if (hang) {
+          // lifting a boat: the cables run down from each winch to the sling's ends by the gunwale, the sling cradles the
+          // hull (its bottom at hang.y); spreader blocks at the cable ends
+          const hb = hang.hb, yt = hang.top, yb = hang.y;
+          for (const sx of [-1, 1]) {
+            B.tube('metal', K.galv, [P3(sx * (W / 2 - 0.05), BY - 0.45, wz), P3(sx * (hb + 0.12), yt + 0.25, wz)], 0.018, { radial: 4 });
+            B.box('metal', K.galvDk, 0.14, 0.22, 0.2, sx * (hb + 0.12), yt + 0.14, wz, { r: 0.02 });
+          }
+          for (let i = 0; i <= 10; i++) { const a = (i / 10) * PI, c = Math.cos(a); pts.push([c * (hb + 0.06), yb + (yt - yb) * (1 - Math.pow(Math.sin(a), 0.55))]); }
+          for (let i = 0; i < 10; i++) { const [x0, y0] = pts[i], [x1, y1] = pts[i + 1]; B.push((x0 + x1) / 2, (y0 + y1) / 2, wz, 0, 0, Math.atan2(y1 - y0, x1 - x0)); pbox(B, 'paint', '#3f6fb0', Math.hypot(x1 - x0, y1 - y0) + 0.02, 0.014, 0.18, 0, 0, 0); B.pop(); }
+          continue;
+        }
         for (let i = 0; i <= 8; i++) { const t = i / 8, xx = (t - 0.5) * (W - 0.2); pts.push([xx, BY - 0.5 - 0.22 * Math.sin(t * PI)]); }
         for (let i = 0; i < 8; i++) { const [x0, y0] = pts[i], [x1, y1] = pts[i + 1]; B.push((x0 + x1) / 2, (y0 + y1) / 2, wz, 0, 0, Math.atan2(y1 - y0, x1 - x0)); pbox(B, 'paint', '#3f6fb0', Math.hypot(x1 - x0, y1 - y0) + 0.02, 0.012, 0.16, 0, 0, 0); B.pop(); }
         for (const sx of [-1, 1]) B.box('metal', K.galvDk, 0.12, 0.2, 0.2, sx * (W / 2 - 0.1), BY - 0.52, wz, { r: 0.02 });
@@ -1458,7 +1515,7 @@ export function registerMarinaDock(D, H) {
       B.pop();
       B.blink('#ffb347', W / 2, BY + BH + 0.12, L / 2 + 0.3, { size: 0.05, rate: 0.8, lo: 0.2, hi: 5 });
       B.cyl('metal', 'charcoal', 0.06, 0.1, W / 2, BY + BH + 0.05, L / 2 + 0.3, { seg: 8 });
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.col(sx * W / 2 - (sx < 0 && sz < 0 ? 0.5 : 0.3), 0, sz * L / 2 - 0.66, sx * W / 2 + 0.3, BY, sz * L / 2 + 0.66);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.col(sx * W / 2 - (sx < 0 && sz < 0 ? 0.5 : 0.3), 0, sz * L / 2 - 0.66, sx * W / 2 + 0.3, BY, sz * L / 2 + 0.66, { roof: true });   // (leg tops: out of reach but a special's, so off-limits)
     },
   };
 
@@ -1881,6 +1938,298 @@ export function registerMarinaDock(D, H) {
         B.col(Math.min(n0, n1), 0, -0.16, Math.max(n0, n1), 1.08, 0.12, { roof: true });
         B.col(Math.min(n0, n1), rise, run, Math.max(n0, n1), rise + 1.03, run + 0.28, { roof: true });
       }
+    },
+  };
+
+  // ================================================================================================ the Long Stages slice
+  // (2026-09-30, props-marina-slice.js): the chandlery store + its loading deck, the boatyard's laid-up yacht on a cradle,
+  // the mast rack, the visitor pontoons' sign boards. Placements are props-marina-slice.js SLICE_PLACEMENTS.
+
+  // ---- the chandlery store: dresses the `chandlery` block (W × D × H around pos, a roof you slide off): a slate-blue
+  //      weatherboard store with a pitched roof (ridge along Z, gables to the loading deck and the quay), sliding loading
+  //      doors at deck level on the front (+Z) under a hoist beam, a shopfront to the quay (-Z), painted trade lettering
+  //      over the chandlery's berth (-X), a side door + the gas cage wall (+X)
+  D.chandlery = {
+    desc: 'Chandlery store dressing around a W × D × H block (pos = block base centre at pier level): weatherboard trim + corner boards, pitched slate roof with a louvred ventilator (roof collides, off limits), front (+Z) sliding timber loading doors at deck height (one slid open), pedestrian door, CHANDLERY gable sign + SHIP\'S STORES board, cathead hoist beam with a block and hook; back (-Z) shopfront with two display windows (coils of rope, lifejackets, fenders), shop door + fanlight, HALYARD CHANDLERY fascia; west (-X) CHANDLERY painted lettering + windows; east (+X) side door, window, notice board.',
+    params: { w: 'm (6)', d: 'm (6.5)', h: 'm (4.2)', deck: 'loading-deck height along the front (1.3)', wall: 'the block\'s weatherboard colour (for the gables)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const W = o.w ?? 6, Dd = o.d ?? 6.5, Hh = o.h ?? 4.2, dk = o.deck ?? 1.3, rise = 2.1;
+      const trim = '#ece6d8', tar = o.wall ?? '#566b80', door = '#8a4a3a', doorDk = '#6d3a2e', roofC = '#4f5a66', navy = K.club, gold = K.clubGold;
+      blockTrim(B, W, Dd, Hh, trim, [1, 3]);
+      // corner boards (white) up every corner
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) pbox(B, 'paint', trim, 0.14, Hh, 0.14, sx * (W / 2 + 0.02), Hh / 2, sz * (Dd / 2 + 0.02));
+      // ---- pitched roof (ridge along Z) with weatherboard gables, bargeboards, a louvred ventilator on the ridge
+      B.push(0, 0, 0, HP);
+      gableRoof(B, -Dd / 2, Dd / 2, -W / 2, W / 2, Hh, rise, { wall: tar, roof: roofC, ov: 0.22, seams: 0.5 });
+      B.pop();
+      for (const sz of [-1, 1]) {
+        // bargeboards up both gable slopes
+        for (const sx of [-1, 1]) { B.push(sx * W / 4, Hh + rise / 2, sz * (Dd / 2 + 0.24), 0, 0, -sx * Math.atan2(rise, W / 2)); B.box('paint', trim, Math.hypot(W / 2, rise) + 0.3, 0.2, 0.05, 0, 0, 0, { r: 0.02 }); B.pop(); }
+        B.sph('paint', trim, 0.09, 0, Hh + rise + 0.12, sz * (Dd / 2 + 0.24), { ws: 8, hs: 6 });
+      }
+      B.box('paint', trim, 1.0, 0.7, 0.9, 0, Hh + rise - 0.05, -0.8, { r: 0.04 });
+      for (const sx of [-1, 1]) for (let k = 0; k < 4; k++) pbox(B, NS('paint'), shade(trim, 0.7), 0.02, 0.05, 0.7, sx * 0.51, Hh + rise - 0.25 + k * 0.12, -0.8);
+      B.box('paint', roofC, 1.3, 0.1, 1.2, 0, Hh + rise + 0.33, -0.8, { r: 0.03 });
+      B.cyl('metal', '#3a3f48', 0.09, 1.1, 0, Hh + rise - 0.2, 1.6, { seg: 10 });                        // stovepipe
+      B.lathe('metal', '#3a3f48', [[0, 0], [0.2, 0.02], [0.05, 0.16], [0, 0.17]], 0, Hh + rise + 0.36, 1.6, { seg: 10 });
+      B.col(-W / 2 - 0.25, Hh, -Dd / 2 - 0.3, W / 2 + 0.25, Hh + rise + 0.4, Dd / 2 + 0.3, { roof: true });
+      // ---- front (+Z): loading doors at deck level, pedestrian door, gable sign, hoist beam
+      onFace(B, W, Dd, 0, (L) => {
+        const dx = -0.9, dw = 2.7, dh = 2.4, y0 = dk;
+        pbox(B, 'paint', trim, dw + 0.24, 0.14, 0.08, dx, y0 + dh + 0.07, 0.04);
+        for (const sx of [-1, 1]) pbox(B, 'paint', trim, 0.12, dh, 0.08, dx + sx * (dw / 2 + 0.06), y0 + dh / 2, 0.04);
+        pbox(B, NS('paint'), '#15181c', dw, dh, 0.01, dx, y0 + dh / 2, 0.004);                            // the dark store inside
+        B.box('metal', K.galvDk, dw * 1.85, 0.09, 0.09, dx + dw * 0.42, y0 + dh + 0.2, 0.13, { r: 0.02 });   // top track
+        // two boarded leaves with Z braces on hangers: the left one closed, the right one slid open along the track
+        for (const [lx, lz] of [[dx - dw / 4, 0.12], [dx + dw * 0.85, 0.2]]) {
+          B.box('wood', door, dw / 2 - 0.02, dh - 0.04, 0.06, lx, y0 + dh / 2, lz, { r: 0.012 });
+          for (let k = -2; k <= 2; k++) pbox(B, NS('wood'), doorDk, 0.012, dh - 0.1, 0.01, lx + k * (dw / 10), y0 + dh / 2, lz + 0.035);
+          for (const yy of [0.25, dh - 0.3]) pbox(B, 'wood', doorDk, dw / 2 - 0.12, 0.12, 0.03, lx, y0 + yy, lz + 0.045);
+          B.push(lx, y0 + dh / 2 - 0.02, lz + 0.045, 0, 0, Math.atan2(dh - 0.55, dw / 2 - 0.2)); pbox(B, 'wood', doorDk, Math.hypot(dh - 0.55, dw / 2 - 0.2), 0.11, 0.03, 0, 0, 0); B.pop();
+          for (const hx of [-0.42, 0.42]) { pbox(B, 'metal', K.galvDk, 0.06, 0.24, 0.02, lx + hx, y0 + dh + 0.08, lz + 0.03); B.cyl('metal', K.galvDk, 0.05, 0.03, lx + hx, y0 + dh + 0.2, lz + 0.03, { rx: HP, seg: 8 }); }
+          pbox(B, 'metal', 'charcoal', 0.04, 0.3, 0.04, lx + (lz > 0.15 ? -1 : 1) * (dw / 4 - 0.15), y0 + 1.1, lz + 0.06);
+        }
+        B.decal('hazard', 0.9, 0.08, dx, y0 + 0.04, 0.2, { tint: K.fuelYel });
+        // pedestrian door + lantern + a painted board OPEN
+        doorUnit(B, 2.05, 0.9, 2.05, { frame: trim, leaf: navy, glassH: 0.34 });
+        B.push(0, y0, 0); lantern(B, 1.35, 2.25); B.pop();
+        B.box('wood', 'woodlight', 0.62, 0.22, 0.03, 2.05, y0 + 2.35, 0.03, { r: 0.01 });
+        letters(B, 'STORES', { h: 0.09, x: 2.05, y: y0 + 2.31, z: 0.048, c: navy, flat: true, ds: 4, wt: 0.22, track: 0.14 });
+        // gable: CHANDLERY letters on a cream board, a round date plaque
+        B.box('paint', trim, 3.7, 0.6, 0.05, 0, Hh + 0.62, 0.03, { r: 0.02 });
+        B.box('paint', navy, 3.6, 0.5, 0.02, 0, Hh + 0.62, 0.06, { r: 0.015 });
+        letters(B, 'CHANDLERY', { h: 0.32, x: 0, y: Hh + 0.46, z: 0.07, c: gold, flat: true, ds: 4, wt: 0.2, track: 0.13 });
+        B.cyl('paint', trim, 0.22, 0.04, 0, Hh + 1.35, 0.03, { rx: HP, seg: 16 });
+        B.cyl('paint', navy, 0.18, 0.02, 0, Hh + 1.35, 0.055, { rx: HP, seg: 16 });
+        letters(B, '1897', { h: 0.09, x: 0, y: Hh + 1.305, z: 0.068, c: gold, flat: true, ds: 4, wt: 0.2, track: 0.1 });
+        // cathead hoist beam out of the gable peak: timber beam, brace, a block and a rope down to a hook
+        const hy = Hh + 1.72;
+        B.box('wood', 'wooddark', 0.22, 0.24, 1.35, dx, hy, 0.66, { r: 0.02 });
+        B.push(dx, hy - 0.55, 0.32, 0, HP * 0.55); B.box('wood', 'wooddark', 0.12, 0.12, 0.9, 0, 0, 0, { r: 0.015 }); B.pop();
+        B.cyl('metal', K.galvDk, 0.12, 0.08, dx, hy - 0.2, 1.2, { rz: HP, seg: 12 });
+        pbox(B, 'metal', K.galvDk, 0.06, 0.3, 0.2, dx, hy - 0.26, 1.2);
+        B.cyl('paint', K.rope, 0.015, 1.55, dx, hy - 1.15, 1.2, { seg: 5 });
+        B.tor('metal', K.galvDk, 0.07, 0.018, dx, hy - 1.98, 1.2, { rs: 4, ts: 10, arc: PI * 1.4, rz: -PI * 0.2 });
+        pbox(B, 'metal', K.galvDk, 0.08, 0.14, 0.06, dx, hy - 1.86, 1.2);
+        downpipe(B, -L / 2 + 0.2, Hh, trim);
+        downpipe(B, L / 2 - 0.2, Hh, trim);
+      });
+      // ---- back (-Z): the shopfront to the quay (display windows, door with a fanlight, fascia, lanterns)
+      onFace(B, W, Dd, 2, (L) => {
+        pbox(B, 'paint', trim, L - 0.4, 0.12, 0.1, 0, 0.06, 0.05);                                         // stallriser plinth
+        for (const sx of [-1, 1]) {
+          const wx = sx * 1.75;
+          windowUnit(B, wx, 0.55, 1.7, 1.45, { frame: navy, mull: 1, transom: 0.8, blind: '#f3ead2', lit: 0.9 });
+          pbox(B, 'paint', navy, 1.86, 0.44, 0.06, wx, 0.3, 0.03);                                        // stallriser
+          // the display: coiled rope, a lifejacket, a ring buoy, a hanging fender, paint tins
+          B.tor(NS('paint'), K.rope, 0.2, 0.05, wx - 0.45, 0.72, -0.12, { rs: 5, ts: 12, rx: HP });
+          B.tor(NS('paint'), K.ropeBlue, 0.16, 0.045, wx - 0.45, 0.8, -0.12, { rs: 5, ts: 12, rx: HP });
+          B.box(NS('gloss'), '#e8702a', 0.42, 0.55, 0.12, wx + 0.1, 1.15, -0.1, { r: 0.05 });
+          B.tor(NS('gloss'), '#e45a3a', 0.2, 0.05, wx + 0.55, 1.25, -0.08, { rs: 6, ts: 14 });
+          B.lathe(NS('gloss'), navy, [[0, -0.28], [0.08, -0.26], [0.11, -0.18], [0.11, 0.18], [0.08, 0.26], [0, 0.28]], wx - 0.05, 1.55, -0.1, { seg: 8 });
+          for (let k = 0; k < 3; k++) B.cyl(NS('paint'), ['#3f6fb0', '#e8e2d2', '#c9453b'][k], 0.08, 0.16, wx + 0.35 + k * 0.17, 0.66, -0.1, { seg: 8 });
+          B.push(0, 0, 0); lantern(B, sx * 0.72, 2.45); B.pop();
+        }
+        doorUnit(B, 0, 1.0, 2.2, { frame: navy, leaf: navy, glassH: 0.6, pushbar: false });
+        B.box('paint', navy, 1.3, 0.34, 0.06, 0, 2.48, 0.03, { r: 0.02 });                                 // fanlight board
+        letters(B, 'NO. 3', { h: 0.12, x: 0, y: 2.42, z: 0.065, c: gold, flat: true, ds: 4, wt: 0.2, track: 0.1 });
+        B.box('paint', navy, L - 0.3, 0.52, 0.08, 0, 3.1, 0.04, { r: 0.03 });                             // fascia
+        pbox(B, 'paint', gold, L - 0.44, 0.03, 0.01, 0, 3.32, 0.085);
+        pbox(B, 'paint', gold, L - 0.44, 0.03, 0.01, 0, 2.88, 0.085);
+        letters(B, 'HALYARD CHANDLERY', { h: 0.24, x: 0, y: 2.98, z: 0.085, c: trim, flat: true, ds: 4, wt: 0.2, track: 0.13 });
+        awningRolled(B, 0, 3.52, L - 0.6, navy, trim);
+        downpipe(B, -L / 2 + 0.2, Hh, trim);
+      });
+      // ---- west (-X, over the chandlery's berth): painted lettering, windows, a hung life ring
+      onFace(B, W, Dd, 3, (L) => {
+        letters(B, 'CHANDLERY', { h: 0.5, x: 0, y: 2.6, z: 0.01, c: gold, flat: true, ds: 4, wt: 0.22, track: 0.14 });
+        for (const wx of [-1.7, 1.7]) windowUnit(B, wx, 0.9, 0.9, 1.0, { frame: trim, mull: 1, blind: '#e6ddc8' });
+        B.push(0, 0.2, 0.06, 0, 0, 0); B.tor('gloss', '#e45a3a', 0.3, 0.07, 0, 1.25, 0.04, { rs: 6, ts: 16 }); B.pop();
+      });
+      // ---- east (+X, the hardstanding): side door, window, a notice board
+      onFace(B, W, Dd, 1, (L) => {
+        doorUnit(B, -1.9, 0.9, 2.05, { frame: trim, leaf: door, glassH: 0.3 });
+        windowUnit(B, 0.2, 1.1, 1.1, 1.0, { frame: trim, mull: 1 });
+        B.box('wood', 'wooddark', 0.8, 0.6, 0.04, 0.2, 2.75, 0.02, { r: 0.012 });
+        pbox(B, 'paint', '#b98f62', 0.72, 0.52, 0.01, 0.2, 2.75, 0.042);
+        B.decal('pst9', 0.2, 0.3, 0.02, 2.78, 0.05, { rz: 0.04 });
+        B.decal('pst2', 0.17, 0.25, 0.4, 2.72, 0.05, { rz: -0.05 });
+        downpipe(B, L / 2 - 0.2, Hh, trim);
+      });
+    },
+  };
+
+  // ---- the chandlery's loading deck: dresses the `loading-deck` block (pos = the deck top at its centre; local +X along
+  //      the deck, +Z its north face). Over the channel (local x < wet) it is a timber staging: piles down both faces, a
+  //      whaler, a railing along the north edge with a loading gap under the davit; over the hardstanding it is a
+  //      concrete dock face with rubber bumpers. On it: the davit crane, crate stacks, a pallet of paint tins, rope,
+  //      a sack truck (the cover). Colliders: rails, davit post, the cover stacks.
+  D.loadingdeck = {
+    desc: 'Chandlery loading deck dressing (pos = deck top centre): timber staging over the channel (piles on both faces, whaler, railing with a loading gap, cleats), concrete loading-dock face over the hardstanding (rubber bumpers, steel edge angle, hazard nosing), a slewing davit crane with a hand winch over the gap, crate stacks, a pallet of paint tins, rope coils and a sack truck (collide).',
+    params: { w: 'deck length along X (11)', d: 'deck depth (4.2)', wet: 'local x where the staging ends / the dock face begins (-0.5)', gap: '[x0, x1] loading gap in the north railing' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const W = o.w ?? 11, Dd = o.d ?? 4.2, wet = o.wet ?? -0.5, gap = o.gap ?? [-3.6, -2.2], hw = W / 2, hd = Dd / 2, dkY = o.y ?? 1.3;
+      const x0 = -hw, wetL = wet - x0;
+      // ---- staging over the channel: piles on both long faces + the west end, whalers along the top
+      B.push(0, -dkY, 0);
+      for (const sz of [-1, 1]) {
+        const n = Math.max(2, Math.round(wetL / 1.8) + 1);
+        for (let i = 0; i < n; i++) { const x = x0 + 0.3 + ((wetL - 0.6) * i) / (n - 1); pile(B, x, sz * (hd + 0.14), dkY - 0.08, 0.15, { wrap: i % 3 === 1 ? 2 : 0, wrapY: dkY - 0.7 }); }
+      }
+      pile(B, x0 - 0.14, 0, dkY - 0.08, 0.15);
+      B.pop();
+      for (const sz of [-1, 1]) B.box(NS('wood'), K.whaler, wetL + 0.2, 0.26, 0.1, x0 + wetL / 2 - 0.1, -0.2, sz * (hd + 0.05), { r: 0.018 });
+      B.box(NS('wood'), K.whaler, 0.1, 0.26, Dd + 0.2, x0 - 0.05, -0.2, 0, { r: 0.018 });
+      // cross-bracing under the staging (seen from the channel)
+      for (const sz of [-1, 1]) for (let x = x0 + 0.3; x < wet - 1.6; x += 3.6) {
+        B.push(x + 0.9, -1.25, sz * (hd + 0.2), 0, 0, 0.62); pbox(B, NS('wood'), K.pile, 2.1, 0.12, 0.08, 0, 0, 0); B.pop();
+      }
+      // ---- dock face over the hardstanding (north face, local x > wet): steel edge angle, hazard nosing, rubber bumpers
+      const dL = hw - wet;
+      pbox(B, 'metal', K.galvDk, dL, 0.08, 0.06, wet + dL / 2, -0.04, hd + 0.03);
+      B.decal('hazard', dL - 0.1, 0.1, wet + dL / 2, -0.12, hd + 0.062, { tint: K.fuelYel });
+      for (let x = wet + 0.8; x < hw - 0.3; x += 1.7) B.box('rubber', K.fender, 0.3, 0.55, 0.12, x, -0.55, hd + 0.06, { r: 0.04 });
+      // deck edge band + cleats on the staging
+      for (const x of [x0 + 0.9, x0 + 4.3]) cleat(B, x, 0, hd - 0.18, 0, 0.3);
+      cleat(B, x0 + 0.2, 0, -0.9, HP, 0.3);
+      // ---- north railing over the channel (rail colliders), open at the loading gap; a post + chain across the gap
+      const rail = (a, b) => {
+        if (b - a < 0.3) return;
+        const z = hd - 0.08;
+        for (let x = a; x <= b + 1e-3; x += (b - a) / Math.max(1, Math.round((b - a) / 1.2))) { B.cyl('metal', K.galv, 0.028, 1.02, x, 0.51, z, { seg: 6 }); pbox(B, NS('metal'), K.galvDk, 0.1, 0.02, 0.1, x, 0.01, z); }
+        B.cyl('metal', K.galv, 0.03, b - a, (a + b) / 2, 1.02, z, { rz: HP, seg: 6 });
+        B.cyl(NS('metal'), K.galv, 0.018, b - a, (a + b) / 2, 0.55, z, { rz: HP, seg: 5 });
+        B.col(a - 0.05, 0, z - 0.1, b + 0.05, 1.08, z + 0.35, { rail: true });
+      };
+      rail(x0 + 0.15, gap[0]); rail(gap[1], wet - 0.1);
+      for (const x of gap) B.cyl('metal', K.fuelYel, 0.035, 0.95, x, 0.48, hd - 0.08, { seg: 8 });
+      B.tube(NS('metal'), K.galvDk, [P3(gap[0], 0.85, hd - 0.08), P3((gap[0] + gap[1]) / 2, 0.62, hd - 0.08), P3(gap[1], 0.85, hd - 0.08)], 0.012, { radial: 4 });
+      // ---- the davit: a slewing post crane at the gap (post + jib + hand winch, hook over the water)
+      {
+        const px = gap[0] - 0.4, pz = hd - 0.45, yel = K.liftYel;
+        B.cyl('metal', yel, 0.12, 2.6, px, 1.3, pz, { seg: 10 });
+        B.cyl('metal', K.galvDk, 0.3, 0.05, px, 0.025, pz, { seg: 12 });
+        for (let k = 0; k < 6; k++) { const a = (k / 6) * TAU; B.cyl(NS('metal'), K.galvDk, 0.025, 0.05, px + Math.cos(a) * 0.23, 0.06, pz + Math.sin(a) * 0.23, { seg: 5 }); }
+        B.push(px, 2.55, pz, -0.35); B.box('metal', yel, 0.14, 0.18, 2.1, 0, 0, 0.95, { r: 0.02 }); B.pop();
+        B.push(px, 1.9, pz, -0.35, -0.68); B.box('metal', yel, 0.1, 0.1, 1.3, 0, 0, 0.5, { r: 0.015 }); B.pop();
+        const hx = px + Math.sin(-0.35) * 1.9, hz = pz + Math.cos(-0.35) * 1.9;
+        B.cyl('metal', K.galvDk, 0.07, 0.06, hx, 2.42, hz, { rz: HP, seg: 10 });
+        B.cyl('paint', K.galv, 0.008, 1.6, hx, 1.62, hz, { seg: 4 });
+        B.tor('metal', K.galvDk, 0.06, 0.015, hx, 0.8, hz, { rs: 4, ts: 10, arc: PI * 1.4 });
+        B.cyl('metal', K.galvDk, 0.12, 0.2, px + 0.2, 1.05, pz, { rz: HP, seg: 10 });
+        B.push(px + 0.33, 1.05, pz, 0, 0, 0.6); pbox(B, 'metal', K.galvDk, 0.03, 0.34, 0.03, 0, 0.14, 0); B.pop();
+        B.col(px - 0.16, 0, pz - 0.16, px + 0.16, 2.6, pz + 0.16);
+      }
+      // ---- the cover on the deck: two crate stacks, a pallet of paint tins, rope coils, a sack truck
+      const crateStack = (cx, cz, ry, tall) => {
+        B.push(cx, 0, cz, ry);
+        const sz = [[0, 0, 1.1, 0.75], [0.05, 0.75, 0.95, 0.6]];
+        for (const [dx, y, w, h] of tall ? sz : sz.slice(0, 1)) {
+          B.box('wood', 'woodlight', w, h, 0.9, dx, y + h / 2, 0, { r: 0.02 });
+          for (const s of [-1, 1]) pbox(B, NS('wood'), 'wooddark', w + 0.01, 0.07, 0.07, dx, y + h / 2 + s * (h / 2 - 0.08), 0.43);
+          B.push(dx, y + h / 2, 0.46, 0, 0, Math.atan2(h - 0.2, w - 0.2)); pbox(B, NS('wood'), 'wooddark', Math.hypot(h - 0.2, w - 0.2), 0.07, 0.02, 0, 0, 0); B.pop();
+          B.decal('lb6', 0.36, 0.09, dx - 0.1, y + h * 0.62, 0.456);
+        }
+        B.pop();
+        const top = tall ? 1.35 : 0.75, c = Math.cos(ry), s = Math.sin(ry), ex = Math.abs(c) * 0.58 + Math.abs(s) * 0.46, ez = Math.abs(s) * 0.58 + Math.abs(c) * 0.46;
+        B.col(cx - ex, 0, cz - ez, cx + ex, top, cz + ez);
+      };
+      crateStack(x0 + 2.2, -0.75, 0.08, true);
+      crateStack(wet + 1.6, 0.35, -0.12, true);
+      // pallet of paint tins (stretch-wrapped), next to the store's doors
+      {
+        const px = wet + 3.9, pz = -1.1;
+        B.box('wood', 'woodlight', 1.2, 0.14, 1.0, px, 0.07, pz, { r: 0.01 });
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 2; k++) B.cyl(NS('paint'), ['#3f6fb0', '#e8e2d2', '#c9453b', '#2f6b62'][(i + j + k) % 4], 0.12, 0.24, px - 0.42 + i * 0.28, 0.27 + k * 0.25, pz - 0.3 + j * 0.3, { seg: 10 });
+        B.box(NS('gloss'), '#dfe7ea', 1.18, 0.52, 0.94, px, 0.4, pz, { r: 0.03, glow: 0 });
+        B.col(px - 0.62, 0, pz - 0.52, px + 0.62, 0.95, pz + 0.52);
+      }
+      sub(B, 'ropecoil', x0 + 4.4, 0, -1.2, 0.4, { variant: 1 });
+      // sack truck leaning on the stack
+      B.push(wet + 0.7, 0, 1.25, 0.9, 0, 0);
+      B.push(0, 0, 0, 0, -0.35); for (const sx of [-1, 1]) B.cyl('metal', K.fuelBlue, 0.02, 1.3, sx * 0.2, 0.65, 0, { seg: 6 }); pbox(B, 'metal', K.galvDk, 0.45, 0.02, 0.28, 0, 0.02, 0.12); B.pop();
+      for (const sx of [-1, 1]) B.cyl('rubber', K.fender, 0.13, 0.07, sx * 0.24, 0.13, -0.05, { rz: HP, seg: 12 });
+      B.pop();
+    },
+  };
+
+  // ---- laid-up yacht ashore: a sailing yacht (the vessels pack's yacht_sail, its hull + coachroof colliding) propped on a
+  //      keel block and four screw-pad stands, a ladder up to the cockpit, a cradle collider down to the ground under the
+  //      hull (no crawl space under it), a tarp over the cockpit, antifouling drips on the ground
+  D.yardyacht = {
+    desc: 'Sailing yacht laid up ashore (keel along local Z): the yacht_sail hull (colliders) on a timber keel block, four steel screw-pad stands, a ladder up the transom, a tarp over the boom, oil drums by the keel; a ground collider under the hull keeps the crawl space shut.',
+    params: { length: 'm (8)', name: 'transom name', color: 'hull' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const L = o.length ?? 8, keelH = 0.55, wl = keelH + 0.6, Bm = L * 0.32;
+      sub(B, 'yacht_sail', 0, wl, 0, 0, { length: L, name: o.name, color: o.color, accent: o.accent, col: true });
+      // keel blocks (timber stack) under the keel
+      for (const z of [-L * 0.12, L * 0.12]) {
+        B.box('wood', 'wooddark', 0.5, 0.25, 0.9, 0, 0.125, z, { r: 0.02 });
+        B.box('wood', 'woodlight', 0.44, 0.25, 0.8, 0, 0.375, z, { r: 0.02 });
+        B.box('wood', 'wooddark', 0.4, 0.14, 0.7, 0, 0.57, z, { r: 0.02 });
+      }
+      // screw-pad stands: tripod legs to a pad against the hull at the turn of the bilge
+      for (const sx of [-1, 1]) for (const z of [-L * 0.22, L * 0.18]) {
+        const xh = sx * Bm * 0.36, yh = wl - 0.25;
+        B.tube('metal', K.fuelBlue, [P3(sx * (Bm * 0.36 + 0.75), 0, z), P3(xh + sx * 0.08, yh - 0.1, z)], 0.035, { radial: 6 });
+        for (const dz of [-0.45, 0.45]) B.tube('metal', K.fuelBlue, [P3(sx * (Bm * 0.36 + 0.55), 0, z + dz), P3(xh + sx * 0.3, yh * 0.6, z)], 0.025, { radial: 5 });
+        B.box('rubber', K.fender, 0.06, 0.24, 0.2, xh, yh, z, { r: 0.02, rz: sx * 0.5 });
+        pbox(B, 'metal', K.galvDk, 0.3, 0.02, 0.3, sx * (Bm * 0.36 + 0.75), 0.01, z);
+      }
+      // ladder up the transom, tarp over the boom
+      B.push(0, 0, -L / 2 - 0.35, 0, -0.22);
+      for (const sx of [-1, 1]) B.cyl('metal', K.galv, 0.025, 2.2, sx * 0.22, 1.08, 0, { seg: 6 });
+      for (let y = 0.25; y < 2.1; y += 0.3) B.cyl(NS('metal'), K.galv, 0.018, 0.44, 0, y, 0, { rz: HP, seg: 5 });
+      B.pop();
+      // drums + a paint tray by the keel, drips of antifouling
+      sub(B, 'barrel', Bm * 0.3 + 0.7, 0, L * 0.3, 0, { variant: 0, color: '#c9453b' });
+      B.cyl(NS('paint'), K.antifoul, 0.35, 0.005, 0.5, 0.004, -L * 0.05, { seg: 12 });
+      // (no crawl space: the hull's underside down to the ground collides)
+      B.col(-Bm * 0.3, 0, -L * 0.38, Bm * 0.3, wl, L * 0.36);
+    },
+  };
+
+  // ---- mast rack: two timber trestles with three unstepped aluminium masts + a boom lying across them (collides as a
+  //      solid rack: waist-high cover), spreaders + rigging coiled at the heels
+  D.mastrack = {
+    desc: 'Boatyard mast rack along local Z: two A-frame timber trestles carrying three unstepped masts and a boom (spreaders, halyards taped along, rigging coiled at the heels, masthead lights), a tag on each; collider = the rack (1.2 m).',
+    params: { length: 'm (8)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      const L = o.length ?? 8;
+      for (const z of [-L * 0.3, L * 0.3]) {
+        for (const sx of [-1, 1]) { B.push(sx * 0.35, 0.55, z, 0, 0, sx * 0.3); B.box('wood', 'wooddark', 0.1, 1.2, 0.12, 0, 0, 0, { r: 0.015 }); B.pop(); }
+        B.box('wood', 'woodlight', 1.4, 0.12, 0.2, 0, 1.08, z, { r: 0.02 });
+        B.box('wood', 'woodlight', 1.0, 0.08, 0.14, 0, 0.4, z, { r: 0.015 });
+      }
+      const masts = [[-0.45, 0.075, L + 1.6, '#d6dbe0'], [-0.12, 0.07, L + 0.9, '#c9ced3'], [0.2, 0.065, L + 1.2, '#d6dbe0'], [0.5, 0.05, L - 2.2, '#b8bdc2']];
+      masts.forEach(([x, r, len, c], k) => {
+        B.cyl('metal', c, r, len, x, 1.14 + r, (k % 2 ? 0.35 : -0.25), { rx: HP, seg: 8 });
+        if (k < 3) for (const f of [0.35, 0.62]) B.box('metal', c, 1.1 * (1 - f * 0.4), 0.03, 0.06, x, 1.16 + r * 2, (k % 2 ? 0.35 : -0.25) - len / 2 + len * f, { r: 0.01, rz: 0.02 });
+        B.tor(NS('metal'), '#c9ced3', 0.22, 0.012, x, 1.16 + r, (k % 2 ? 0.35 : -0.25) - len / 2 + 0.3, { rs: 3, ts: 12, rx: HP });
+      });
+      for (const z of [-L * 0.1, L * 0.18]) pbox(B, 'paint', K.fuelYel, 0.12, 0.08, 0.03, -0.12, 1.33, z);
+      B.col(-0.75, 0, -L / 2 - 0.3, 0.75, 1.3, L / 2 + 0.4);
+    },
+  };
+
+  // ---- pontoon sign: a two-post board at a gangway head (VISITORS · PONTOON V, berth numbers, a lifebuoy)
+  D.pontoonsign = {
+    desc: 'Visitor pontoon sign on two galvanised posts (front +Z): navy board VISITORS / PONTOON V + berth range, a harbour-authority crest, a life ring hung on the post. Collider = the posts only (thin; see-through board).',
+    params: { text: 'main line (VISITORS)', sub: 'second line (PONTOON V · 1-6)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = null;
+      for (const sx of [-1, 1]) { B.cyl('metal', K.galv, 0.04, 2.3, sx * 0.62, 1.15, 0, { seg: 8 }); B.sph('metal', K.galv, 0.05, sx * 0.62, 2.31, 0, { ws: 6, hs: 4 }); }
+      B.box('gloss', K.club, 1.5, 0.62, 0.05, 0, 1.85, 0.02, { round: true, r: 0.03 });
+      B.box('paint', K.white, 1.44, 0.56, 0.004, 0, 1.85, 0.047, { r: 0.02 });
+      B.box('gloss', K.club, 1.4, 0.52, 0.006, 0, 1.85, 0.05, { r: 0.02 });
+      letters(B, o.text ?? 'VISITORS', { h: 0.17, x: 0, y: 1.9, z: 0.055, c: K.white, flat: true, wt: 0.22, track: 0.14 });
+      letters(B, o.sub ?? 'PONTOON V · 1-6', { h: 0.09, x: 0, y: 1.7, z: 0.055, c: K.clubGold, flat: true, wt: 0.22, track: 0.12 });
+      B.tor('gloss', '#e45a3a', 0.2, 0.05, 0.62, 0.95, 0.08, { rs: 6, ts: 14 });
+      B.col(-0.68, 0, -0.06, -0.56, 2.3, 0.06); B.col(0.56, 0, -0.06, 0.68, 2.3, 0.06);
     },
   };
 

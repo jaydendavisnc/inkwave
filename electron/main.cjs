@@ -87,6 +87,8 @@ function createWindow() {
   ipcMain.removeAllListeners('fs:set'); ipcMain.removeAllListeners('fs:get');
   ipcMain.on('fs:set', (_e, on) => setFs(on));
   ipcMain.on('fs:get', (e) => { e.returnValue = win.isFullScreen(); });
+  ipcMain.removeAllListeners('app:quit');
+  ipcMain.on('app:quit', () => app.quit());   // the main menu's QUIT GAME (desktop app only)
 
   win.on('resized', () => saveState(win));
   win.on('moved', () => saveState(win));

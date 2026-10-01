@@ -7,7 +7,7 @@
 // Numbers: SUBS.boomerang in config.js. Registers the model, icon, sounds and bot use; see kits/registry.js.
 import * as THREE from 'three';
 import { G, emit, on, clamp, lerp, angleDiff } from '../../core/ctx.js';
-import { SUBS, PLAYER } from '../../config.js';
+import { SUBS, PLAYER, subViewScale } from '../../config.js';
 import { Physics, Hit } from '../physics.js';
 import { SUB_KITS, netRec, netId, ghostMute } from './registry.js';
 const r3 = (x) => Math.round(x * 1000) / 1000;
@@ -21,6 +21,7 @@ import { THROWN } from '../bots.js';
 
 const KIND = 'boomerang';
 const WORLD_SCALE = 2.5;            // the prop is modelled at hand size; in the air it reads bigger (~0.75 m across)
+                                    // [sub-view] and is drawn × SUB_VIEW_SCALE.boomerang on top (visual only)
 const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
 const _hit = new Hit(), _hit2 = new Hit();
@@ -120,11 +121,11 @@ const BLUR_FS = `
     al += uAlpha * 0.5 * smoothstep(0.86, 0.95, r) * smoothstep(1.0, 0.95, r);   // the tips' bright rim
     gl_FragColor = vec4(c, al);
   }`;
-function makeMesh(team) {
+function makeMesh(team, vs = 1) {   // ([sub-view] vs: SUB_VIEW_SCALE.boomerang)
   const P = proto(), col = G.teamColors[team];
   const outer = new THREE.Group(), tilt = new THREE.Group(), spin = new THREE.Group(), model = new THREE.Group();
-  model.scale.setScalar(WORLD_SCALE);
-  model.position.set(-P.center.x * WORLD_SCALE, 0, -P.center.z * WORLD_SCALE);
+  model.scale.setScalar(WORLD_SCALE * vs);
+  model.position.set(-P.center.x * WORLD_SCALE * vs, 0, -P.center.z * WORLD_SCALE * vs);
   const body = new THREE.Mesh(P.d.body, getPlasticMaterial()); body.castShadow = true;
   const ink = new THREE.Mesh(P.d.ink, getInkMaterial(col)); ink.castShadow = true;
   model.add(body, ink);
@@ -133,9 +134,9 @@ function makeMesh(team) {
     uniforms: { uColor: { value: col.clone() }, uAlpha: { value: 0 }, uAng: { value: 0 } },
     vertexShader: BLUR_VS, fragmentShader: BLUR_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide,
   }));
-  blur.renderOrder = 3; blur.visible = false;
+  blur.renderOrder = 3; blur.visible = false; blur.scale.setScalar(vs);
   tilt.add(blur);
-  outer.userData = { tilt, spin, blur };
+  outer.userData = { tilt, spin, blur, r: P.radius * vs };   // (r: the drawn blade's reach from its middle)
   return outer;
 }
 
@@ -176,14 +177,14 @@ function use(subs, a, sub) {
   const P = plan(a, sub, newPlan());
   const it = spawn(subs, a, sub, P, false, netId(a));
   netRec(a, KIND, [0, it.gid, r3(P.start.x), r3(P.start.y), r3(P.start.z), r3(P.dir.x), r3(P.dir.y), r3(P.dir.z)]);
-  if (a.isLocal || a._nearCamera?.()) G.audio?.play('boomerang_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.8 });
+  G.cues?.one('boomerang_throw', { at: a.pos, owner: a, kind: 'throw', sub: true, vol: 0.8 });   // sfx-cues: through the cue mix (heard over a fight)
   emit('sub:use', { actor: a, kind: KIND });
 }
 // Online, a remote player's boomerang is a ghost: out, hover, home and orbit play the same (its ink is its owner's to
 // send, its hits are dropped), but its owner decides how it ends: [3, gid, x, y, z] it caught a foe (armed there),
 // [1, gid, x, y, z, big] the burst, [2, gid] it fizzled
 function spawn(subs, a, s, P, ghost, gid) {
-  const mesh = makeMesh(a.team);
+  const mesh = makeMesh(a.team, subViewScale(KIND));   // [sub-view]
   mesh.position.copy(P.start);
   (G.scene || subs.scene).add(mesh);
   const it = {
@@ -204,7 +205,7 @@ function ghost(a, d) {
     if (items.some((x) => x.gid === gid)) return;
     const P = newPlan(); P.start.set(d[2], d[3], d[4]); P.dir.set(d[5], d[6], d[7]).normalize();
     spawn(G.subs, a, SUBS[KIND], planFrom(SUBS[KIND], P), true, gid);
-    if (a._nearCamera?.()) G.audio?.play('boomerang_throw', { pos: a.pos, volume: 0.8 });
+    G.cues?.one('boomerang_throw', { at: a.pos, owner: a, kind: 'throw', sub: true, vol: 0.8 });   // sfx-cues
     return;
   }
   const it = items.find((x) => x.ghost && x.gid === gid && x.state !== 'dead');
@@ -217,7 +218,7 @@ function ghost(a, d) {
 function setLoop(it, name, vol, pitch) {
   if (it.loopName === name) { it.loop?.set({ volume: vol, pitch, pos: it.pos }); return; }
   it.loop?.stop(0.12); it.loop = null; it.loopName = name;
-  if (name && G.audio && nearCam(it.pos, 45)) it.loop = G.audio.loop(name, { pos: it.pos, volume: vol, pitch });
+  // sfx-cues: the whirr / orbit loops follow it by state from src/audio/cues.js
 }
 
 function tick(dt) {
@@ -388,7 +389,8 @@ function arm(it, e) {
   {
     it.state = 'armed'; it.t = 0; it.tickT = 1 / s.tickRate; it.paintT = 0; it.beepT = 0; it.victim = e;
     it.vel.set(0, 0, 0);
-    if (nearCam(it.pos, 40)) { G.fx?.burst(it.pos, UP, color(it), { count: 10, speed: 3.5, size: 0.08 }); G.audio?.play('bomb_beep', { pos: it.pos, volume: 0.8, pitch: 1.2 }); }
+    if (nearCam(it.pos, 40)) G.fx?.burst(it.pos, UP, color(it), { count: 10, speed: 3.5, size: 0.08 });
+    G.cues?.sub(KIND, 'beep', { owner: it.owner, team: it.team, at: it.pos, target: e, radius: s.hitRadius, pitch: 0.9 });   // sfx-cues: caught one
     setLoop(it, 'boomerang_whirr', 0.85, 1.6);
     emit('sub:arm', { kind: KIND, pos: it.pos.clone(), team: it.team, radius: s.hitRadius });
   }
@@ -398,7 +400,7 @@ function armed(it, dt) {
   it.spinW = lerp(it.spinW, 44, 1 - Math.exp(-6 * dt));
   shred(it, dt, 0);
   it.beepT -= dt;
-  if (it.beepT <= 0) { it.beepT = lerp(0.2, 0.08, k); if (nearCam(it.pos, 40)) G.audio?.play('bomb_beep', { pos: it.pos, volume: 0.5 + 0.4 * k, pitch: 1.1 + 0.4 * k }); }
+  if (it.beepT <= 0) { it.beepT = lerp(0.2, 0.08, k); G.cues?.sub(KIND, 'beep', { owner: it.owner, team: it.team, at: it.pos, target: it.victim, radius: s.hitRadius, vol: 0.6 + 0.4 * k, pitch: 1 + 0.35 * k }); }   // sfx-cues
   if (it.t >= s.hitFuse && !it.ghost) blast(it, s.hitRadius, s.hitDamageMax, s.hitDamageMin, s.hitPaintRadius, true);
 }
 
@@ -441,7 +443,7 @@ function blast(it, radius, dmgMax, dmgMin, paintR, big) {
   if (!g.hit || c.y - g.point.y > 1.2) area += G.paint.splat(c, paintR * 0.6, it.team, { seed: Math.random() });
   credit(it, area);
   G.fx?.explosion(c, color(it), big ? radius : radius * 0.85);
-  G.audio?.play(big ? 'bomb_explode' : 'boomerang_burst', { pos: c });
+  if (big) G.cues?.sub(KIND, 'boom', { owner: it.owner, team: it.team, at: c }); else G.audio?.play('boomerang_burst', { pos: c });   // sfx-cues: the big one's own blast
   emit('shake', { pos: c.clone(), amount: big ? 0.6 : 0.4 });
   emit('bomb:explode', { actor: it.owner, pos: c.clone(), team: it.team, radius });
   for (const e of G.actors) {
@@ -468,6 +470,11 @@ function streak(it, r) {
 function draw(it, dt) {
   const m = it.mesh, U = m.userData, col = color(it);
   m.position.copy(it.pos);
+  // [sub-view] stopped short of a wall (0.4 m, as built): the drawn blade, if it reaches further, is held off the wall
+  if (it.fromWall && U.r > proto().radius) {
+    const P = it.plan, gap = _v4.copy(it.pos).sub(P.wallPoint).dot(P.wallNormal), want = U.r + 0.03;
+    if (gap < want && gap > -0.5) m.position.addScaledVector(P.wallNormal, Math.min(want - gap, U.r - proto().radius + 0.03));
+  }
   it.spinA = (it.spinA + it.spinW * dt) % (Math.PI * 2);
   U.spin.rotation.y = it.spinA;
   // bank: tilted into the throw while flying, wobbling level while it hovers, tipped in toward you as it circles
@@ -495,7 +502,7 @@ function draw(it, dt) {
     it.fxT -= dt;
     if (it.fxT <= 0) {
       it.fxT = it.state === 'orbit' ? 0.09 : 0.045;
-      const a = Math.random() * Math.PI * 2, r = proto().radius * 0.92, sp = 4 + Math.random() * 3;
+      const a = Math.random() * Math.PI * 2, r = proto().radius * 0.92, sp = 4 + Math.random() * 3;   // ([sub-view] the built reach: these droplets ink where they land)
       _v.set(it.pos.x + Math.cos(a) * r, it.pos.y, it.pos.z + Math.sin(a) * r);
       _v2.set(-Math.sin(a) * sp, 0.6 + Math.random(), Math.cos(a) * sp);
       G.fx.drop(_v, _v2, col, { size: 0.035 + Math.random() * 0.025, life: 0.5, quiet: true });

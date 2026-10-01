@@ -738,11 +738,13 @@ function previewAudio(ctx, key) {
   const R = rng(key.length * 97 + 5);
   const seeds = bars.map(() => [R() * TAU, 2 + R() * 5, 0.4 + R() * 0.6]);
   let v = +ctx.value, s = ctx.settings || {}, t = 0, shown = 0;
-  const eff = () => (key === 'master' ? v : v * (s.master ?? 1));
+  // (the Cues slider — sfx-loud: 0 … 150 %, riding on the sound effects' volume)
+  const eff = () => (key === 'master' ? v : key === 'cues' ? v * (s.sfx ?? 1) * (s.master ?? 1) : v * (s.master ?? 1));
   const set = (nv, ss) => {
-    v = clamp(+nv || 0); if (ss) s = ss;
+    v = clamp(+nv || 0, 0, key === 'cues' ? 1.5 : 1); if (ss) s = ss;
     const e = eff();
-    cap.innerHTML = key === 'master' ? `Overall output <b>${Math.round(v * 100)}%</b>` : `Heard at <b>${Math.round(e * 100)}%</b> after master volume`;
+    cap.innerHTML = key === 'master' ? `Overall output <b>${Math.round(v * 100)}%</b>` : key === 'cues' ? `Heard at <b>${Math.round(e * 100)}%</b> after sound effects and master volume`
+      : `Heard at <b>${Math.round(e * 100)}%</b> after master volume`;
     el.classList.toggle('is-mute', e <= 0.001);
   };
   set(v);
@@ -750,8 +752,8 @@ function previewAudio(ctx, key) {
     el, set,
     tick: (dt) => {
       t += dt;
-      shown += (eff() - shown) * (1 - Math.exp(-dt * 8));
-      const beat = key === 'sfx' ? Math.pow(Math.max(0, Math.sin(t * 5.1)), 6) : 0.55 + 0.45 * Math.pow(Math.max(0, Math.sin(t * Math.PI * 2.4)), 3);
+      shown += (Math.min(1, eff()) - shown) * (1 - Math.exp(-dt * 8));
+      const beat = key === 'cues' ? Math.pow(Math.max(0, Math.sin(t * 9.4)), 10) : key === 'sfx' ? Math.pow(Math.max(0, Math.sin(t * 5.1)), 6) : 0.55 + 0.45 * Math.pow(Math.max(0, Math.sin(t * Math.PI * 2.4)), 3);
       for (let i = 0; i < N; i++) {
         const [p, f, a] = seeds[i];
         const x = i / (N - 1);
@@ -898,7 +900,7 @@ export function createPreview(key, ctx = {}) {
     case 'aimAssist': return previewAimAssist(ctx);
     case 'aimAssistMouse': return previewAimMouse(ctx);
     case 'rumble': return previewRumble(ctx);
-    case 'master': case 'music': case 'sfx': return previewAudio(ctx, key);
+    case 'master': case 'music': case 'sfx': case 'cues': return previewAudio(ctx, key);
     case 'colorblind': return previewColorblind(ctx);
     case 'difficulty': return previewDifficulty(ctx);
     case 'matchLength': return previewLength(ctx);

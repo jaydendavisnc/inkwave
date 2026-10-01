@@ -11,6 +11,26 @@
 //   Used for pilings, water foam, under-deck shading and the analytic deck shadow on the water.
 //   setTheme(name) switches light/sky/sea in place; rebuildForArena(bounds, footprint) follows a stage change.
 //
+// Stage looks (layout.env, all optional — the stages without it keep the Inkopolis-bay look untouched):
+//   bay: false          hide the default far scenery (city across the bay, port, lighthouse, bridge, ferris, sailboats,
+//                       channel buoys) — for a stage somewhere else in the world; gulls: false / buoys: false likewise
+//   backdrop(kit)       the stage's own far scenery (src/world/stages/<id>/backdrop.js): built on stage load, disposed on
+//                       the next one. kit = SCENERY_KIT (geometry helpers, makeIsland terrain) + { THREE, bounds, runs
+//                       (the deck's exposed edges), rnd(seed) }. Returns { static: [geo] (shore-lit scenery), plain: [geo]
+//                       (no waterline foam), terrain: [geo] (makeIsland geos: grass / rock / sand / snow shading),
+//                       instances: [{ geo, list: [[x, y, z, scale, rotY, '#hex'?], …] }], objects: [Object3D] (the
+//                       stage's own live pieces — e.g. a cascade's scrolling water sheet with its own material; never
+//                       colliders: they may stand in the arena but are only looks), animate(t)? (every frame) }
+//                       kit.sceneryMaterial(flags?) gives a MeshStandardMaterial with the sky haze / fog of the far scenery.
+//   theme: { all: {…}, day: {…}, sunset: {…}, golden: {…} }   per-stage overrides of THEMES keys (sea colours, fog, haze,
+//                       sky, grade …) for every time / one time of day
+//   snow: { line, cover }  snow on the backdrop terrain above `line` m (above the sea) and `cover` (0…1) everywhere
+//   weather: { snow: { count, fall, size } | true, mist: { layers, height, reach, inner, opacity, scale, color } | true }
+//                       falling snow round the camera; drifting fog banks lying on the water round the arena
+//   stars: true         a star field that comes out with the dusk themes (THEMES[*].night)
+//   edge: 'none'        no generic pier pilings along the deck edges (the stage dresses its own banks / cliffs)
+//   boats: false        no generic moored boats round the arena (like layout.envBoats === false)
+//
 // Marina water mode (stage property — Halyard, by day or at dusk; each theme supplies its look in THEMES[*].marina):
 // level-derived hull / floating-slab sets (no sea inside hulls, deep shade under the decks), calm sheltered basin,
 // wall-bounced ripples, froth wherever something stands in the water (analytic for hulls, triangle ∩ water-plane
@@ -844,6 +864,7 @@ const HZ_VERT_WORLD = /* glsl */`
 const HZ_FRAG_DECL = /* glsl */`
 ${GLSL_SKY_COMMON}
 ${GLSL_NOISE}
+uniform vec4 uSnow;
 #ifdef HZ_CITY
 varying vec3 vBld;
 float aaBand(float x, float a, float b, float w) { return smoothstep(a - w, a + w, x) * smoothstep(b + w, b - w, x); }
@@ -940,6 +961,10 @@ const HZ_FRAG_COLOR = /* glsl */`
   vec3 c = mix(grass, rock, rockM);
   c = mix(c, sand, sandM);
   c = mix(c, sand * vec3(0.72, 0.7, 0.66), smoothstep(0.45, 0.1, hgt) * sandM);
+  // stage looks: snow above the snow line (ragged by noise) and a dusting everywhere (cover), never on the steepest rock
+  float snowM = max(smoothstep(uSnow.x - 6.0, uSnow.x + 6.0, hgt + (n1 - 0.5) * 22.0 + (n2 - 0.5) * 6.0), uSnow.y * smoothstep(0.3, 0.7, n2 + 0.35));
+  snowM *= smoothstep(0.72, 0.42, slope + (n2 - 0.5) * 0.25);
+  c = mix(c, vec3(0.93, 0.95, 0.99) * (0.94 + 0.08 * nt), snowM);
   diffuseColor.rgb = c * vGlow;
 }
 #endif
@@ -1109,7 +1134,7 @@ function patchScenery(mat, U, flags = {}) {
   for (const d of defs) mat.defines[d] = '';
   mat.fog = false;
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uTime', 'uSunDir', 'uZenith', 'uSkyMid', 'uHorizon', 'uGround', 'uHorizonGlow', 'uGlowColor', 'uGlowParams', 'uHaze', 'uNight']) sh.uniforms[k] = U[k];
+    for (const k of ['uTime', 'uSunDir', 'uZenith', 'uSkyMid', 'uHorizon', 'uGround', 'uHorizonGlow', 'uGlowColor', 'uGlowParams', 'uHaze', 'uNight', 'uSnow']) sh.uniforms[k] = U[k];
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\n' + HZ_VERT_DECL)
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + HZ_VERT_BEGIN_GULL)
@@ -1452,6 +1477,13 @@ function makeIsland(o) {
   };
 }
 
+// transparent stage looks stay out of override passes (GTAO normals / depth): see _buildStageLook
+function aoGate(renderer, scene, camera, geometry) { geometry.drawRange.count = scene.overrideMaterial ? 0 : Infinity; }
+
+// Far-scenery builders for a stage's own backdrop (layout.env.backdrop — see the top of this file). Every geometry is
+// vertex-coloured (prep) and merged by the environment into a few meshes; `glow` 1 = a lamp lit at dusk, 2 = blinking.
+export const SCENERY_KIT = { box, cyl, sph, prep, xf, beam, tube, sag, triGeo, vcolorBy, hullGeo, makeIsland, mulberry, hash2, fbm, vnoise, smooth, polar, DEG, WATER_Y };
+
 // ---------------------------------------------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------------------------------------------
@@ -1488,6 +1520,8 @@ export class Environment {
     this._buildDock();
     this._buildScenery();
     this._buildLife();
+    this._groupBay();
+    this._buildStageLook();
     scene.fog = new THREE.Fog(this.fogColor, 70, 1500);
     this.setTheme(opts.theme || 'day');
   }
@@ -1507,6 +1541,7 @@ export class Environment {
       uSeaDeep: C(), uSeaShallow: C(), uSeaCrest: C(), uFoamColor: C(), uSunLight: C(), uSeaAmbient: C(),
       uSunSpec: { value: 1 }, uWaveStrength: { value: 1 },
       uCloudTex: { value: null },
+      uSnow: { value: new THREE.Vector4(1e4, 0, 0, 0) },   // stage looks: backdrop terrain snow (line above the sea, cover)
       // marina water (theme.marina)
       uWet: { value: Array.from({ length: MAX_WET }, () => new THREE.Vector4()) }, uWetCount: { value: 0 }, uArena: { value: new THREE.Vector4() },
       uWetAx: { value: Array.from({ length: MAX_WET }, () => new THREE.Vector2(1, 0)) },
@@ -2179,7 +2214,8 @@ export class Environment {
     this._runs = runs;
     const pilings = []; // [x, z, radius, topY]
     const foamShapes = [];
-    for (const run of marina ? [] : runs) {
+    const bare = this._stageEnv()?.edge === 'none';   // the stage dresses its own deck edges (banks, cliffs)
+    for (const run of marina || bare ? [] : runs) {
       const dx = (run.bx - run.ax) / run.len, dz = (run.bz - run.az) / run.len;
       const L = run.s1 - run.s0;
       const n = Math.max(2, Math.round(L / 3.4) + 1);
@@ -2193,7 +2229,7 @@ export class Environment {
       }
     }
     // interior grid under the slab (seen from the water), on the slab's own (possibly turned) grid
-    for (const r of this.footprint) {
+    for (const r of bare ? [] : this.footprint) {
       if (r.aligned) {
         for (let x = r.minX + 3.5; x <= r.maxX - 3.5; x += 7) for (let z = r.minZ + 3.5; z <= r.maxZ - 3.5; z += 7) {
           pilings.push([x, z, 0.3, -1.2]);
@@ -2208,7 +2244,7 @@ export class Environment {
 
     // ---- moored boats + dolphins (outside the bounds) ----
     // (a stage that dresses its own water can switch these off: layout.envBoats === false)
-    const boatsSpec = marina || G.level?.layout?.envBoats === false ? [] : [
+    const boatsSpec = marina || G.level?.layout?.envBoats === false || this._stageEnv()?.boats === false ? [] : [
       { kind: 'fishing', x: b.maxX + 3.25, z: b.minZ + (b.maxZ - b.minZ) * 0.77, yaw: 0 },
       { kind: 'launch', x: b.minX - 2.85, z: b.minZ + (b.maxZ - b.minZ) * 0.2, yaw: Math.PI },
       { kind: 'row', x: b.minX - 1.75, z: b.minZ + (b.maxZ - b.minZ) * 0.86, yaw: 0.12 },
@@ -2964,6 +3000,7 @@ export class Environment {
     this.bounds = { ...bounds };
     this.footprint = (rects && rects.length ? rects : [this.bounds]).map(orect);
     this._rebuildDock();
+    this._buildStageLook();
     this._applyMarina();
     this._fitShadow();
     this._bakeFarReflection();
@@ -2987,10 +3024,192 @@ export class Environment {
     this._syncDeckShading();
   }
 
+  // ------------------------------------------------------------------ stage looks (layout.env — see the top of the file)
+  _stageEnv() { return G.level?.layout?.env || null; }
+
+  // the theme with the stage's overrides (env.theme.all, then env.theme[name]); nested grade / marina merge too
+  _stageTheme(name) {
+    const base = THEMES[name] || THEMES.day, E = this._stageEnv();
+    const ovs = [E?.theme?.all, E?.theme?.[name]].filter(Boolean);
+    if (!ovs.length) return base;
+    const T = { ...base };
+    for (const o of ovs) for (const [k, v] of Object.entries(o)) T[k] = v && typeof v === 'object' && !Array.isArray(v) && T[k] && typeof T[k] === 'object' && !Array.isArray(T[k]) ? { ...T[k], ...v } : v;
+    return T;
+  }
+
+  // the stage's env differs from the one the current theme was applied with: main.js re-applies the theme
+  get lookStale() { return (this._lookEnv || null) !== this._stageEnv(); }
+
+  // the Inkopolis-bay far scenery in one group (a stage elsewhere hides it: env.bay === false)
+  _groupBay() {
+    this.bay = new THREE.Group();
+    this.bay.name = 'BayScenery';
+    for (const o of [this.terrain, this.staticScenery, this.city, this.trees, this.lhBeam, this.ferris, this.sailInst]) if (o) { this.root.remove(o); this.bay.add(o); }
+    this.root.add(this.bay);
+  }
+
+  // Build the current stage's look: bay on / off, its own backdrop, terrain snow, weather, stars. Cheap when the stage
+  // (its layout) is the one already built.
+  _buildStageLook() {
+    const L = G.level?.layout || null, E = L?.env || null;
+    if (this._lookLayout === L && this._lookBuilt) return;
+    this._lookLayout = L; this._lookBuilt = true;
+    // dispose the previous stage's pieces
+    for (const o of this._stageObjs || []) { this.root.remove(o); o.traverse?.((c) => { c.geometry?.dispose(); if (c.material && !c.material._shared) c.material.dispose(); }); }
+    this._stageObjs = []; this._backdropAnim = null; this.snowFx = null; this.mistFx = null; this.stars = null;
+    this.bay.visible = E?.bay !== false;
+    if (this.gullInst) this.gullInst.visible = E?.gulls !== false;
+    if (this.buoyInst) this.buoyInst.visible = E?.buoys !== false && this.bay.visible;
+    this.U.uSnow.value.set(E?.snow?.line ?? 1e4, E?.snow?.cover ?? 0, 0, 0);
+    if (!E) return;
+    const add = (o) => {
+      if (!o) return o;
+      o.frustumCulled = false;
+      // transparent looks (mist, water sheets …) sit out the GTAO normal / depth pass (scene.overrideMaterial), which
+      // would draw them as solid occluders (dark cards on the water) — the zone marks' / ribbons' gate
+      o.traverse?.((c) => { if (c.isMesh && c.onBeforeRender === THREE.Object3D.prototype.onBeforeRender && [].concat(c.material).some((m) => m && m.transparent)) c.onBeforeRender = aoGate; });
+      this.root.add(o); this._stageObjs.push(o);
+      return o;
+    };
+    if (typeof E.backdrop === 'function') {
+      try {
+        const kit = { ...SCENERY_KIT, THREE, bounds: { ...this.bounds }, runs: this._runs || [], rnd: mulberry, U: this.U,
+          sceneryMaterial: (flags = {}, params = {}) => patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, ...params }), this.U, flags) };
+        const out = E.backdrop(kit) || {};
+        const U = this.U;
+        const mesh = (geos, mat, name) => { if (!geos || !geos.length) return null; const m = new THREE.Mesh(mergeGeometries(geos.map((g) => prep(g))), mat); m.name = name; return m; };
+        add(mesh(out.static, patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 }), U, { shore: true }), 'StageBackdrop'));
+        add(mesh(out.plain, patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }), U, {}), 'StageBackdropPlain'));
+        add(mesh(out.terrain, patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }), U, { terrain: true, shore: true }), 'StageTerrain'));
+        for (const [i, inst] of (out.instances || []).entries()) {
+          if (!inst?.geo || !inst.list?.length) continue;
+          const im = new THREE.InstancedMesh(prep(inst.geo), patchScenery(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: inst.doubleSided ? THREE.DoubleSide : THREE.FrontSide }), U, {}), inst.list.length);
+          const c = new THREE.Color();
+          inst.list.forEach((t, k) => {
+            _m4.compose(_v.set(t[0], t[1], t[2]), _q.setFromEuler(_e.set(0, t[4] || 0, 0)), _s.setScalar(t[3] || 1));
+            im.setMatrixAt(k, _m4);
+            im.setColorAt(k, c.set(t[5] || '#ffffff'));
+          });
+          im.name = 'StageBackdropInst' + i;
+          add(im);
+        }
+        for (const o of out.objects || []) add(o);
+        if (typeof out.animate === 'function') this._backdropAnim = out.animate;
+      } catch (e) { console.error('[inkwave] stage backdrop failed', e); }
+    }
+    const W = E.weather || {};
+    if (W.snow) this.snowFx = add(this._makeSnow(W.snow === true ? {} : W.snow));
+    if (W.mist) this.mistFx = add(this._makeMist(W.mist === true ? {} : W.mist));
+    if (E.stars) this.stars = add(this._makeStars(E.stars === true ? {} : E.stars));
+  }
+
+  // falling snow: points in a box that wraps round the camera (one draw call, no per-frame CPU work)
+  _makeSnow({ count = 2600, fall = 1.1, size = 0.09, box = 44, color = '#ffffff' } = {}) {
+    const rnd = mulberry(913), pos = new Float32Array(count * 3), ph = new Float32Array(count);
+    for (let i = 0; i < count; i++) { pos[i * 3] = rnd() * box; pos[i * 3 + 1] = rnd() * box * 0.5; pos[i * 3 + 2] = rnd() * box; ph[i] = rnd(); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aPh', new THREE.BufferAttribute(ph, 1));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: this.U.uTime, uCam: { value: new THREE.Vector3() }, uBox: { value: new THREE.Vector3(box, box * 0.5, box) }, uFall: { value: fall }, uSize: { value: size }, uCol: { value: new THREE.Color(color) }, uNight: this.U.uNight },
+      vertexShader: /* glsl */`uniform float uTime, uFall, uSize; uniform vec3 uCam, uBox; attribute float aPh; varying float vA;
+        void main(){
+          vec3 p = position; float t = uTime;
+          p.y -= t * uFall * (0.75 + 0.5 * aPh);
+          p.x += sin(t * 0.7 + aPh * 40.0) * 0.6 + t * 0.35; p.z += cos(t * 0.53 + aPh * 23.0) * 0.6;
+          vec3 o = uCam - uBox * vec3(0.5, 0.35, 0.5);
+          p = o + mod(p - o, uBox);
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          float d = -mv.z; vA = smoothstep(0.4, 1.4, d) * (1.0 - smoothstep(uBox.x * 0.32, uBox.x * 0.5, d));
+          gl_PointSize = uSize * (0.7 + 0.6 * aPh) * projectionMatrix[1][1] * 540.0 / max(d, 0.1);
+          gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: /* glsl */`uniform vec3 uCol; uniform float uNight; varying float vA;
+        void main(){ vec2 c = gl_PointCoord - 0.5; float a = smoothstep(0.5, 0.15, length(c)) * vA * 0.85; if (a < 0.01) discard;
+          gl_FragColor = vec4(uCol * mix(1.0, 0.55, uNight), a); }`,
+      transparent: true, depthWrite: false, fog: false,
+    });
+    const pts = new THREE.Points(g, m);
+    pts.name = 'Snowfall';
+    pts.renderOrder = 8000;
+    return pts;
+  }
+
+  // mist: soft fog banks lying on the water round the arena — a few flat layers (so it reads from above and from the
+  // decks alike, never cutting into the sea) with drifting noise holes; denser at grazing angles like a real layer
+  _makeMist({ layers = 3, height = 2.4, reach = 110, inner = 5, opacity = 0.5, scale = 0.03, color = null } = {}) {
+    const b = this.bounds, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, hx = (b.maxX - b.minX) / 2, hz = (b.maxZ - b.minZ) / 2;
+    const parts = [];
+    for (let k = 0; k < layers; k++) {
+      const g = new THREE.PlaneGeometry(2 * (hx + reach), 2 * (hz + reach), 1, 1);
+      g.rotateX(-Math.PI / 2);
+      g.translate(cx, WATER_Y + 0.25 + (height * (k + 0.5)) / layers, cz);
+      g.setAttribute('aLayer', new THREE.BufferAttribute(new Float32Array(4).fill(k), 1));
+      g.deleteAttribute('uv'); g.deleteAttribute('normal');
+      parts.push(g);
+    }
+    const geo = mergeGeometries(parts);
+    const U = this.U;
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: U.uTime, uHorizon: U.uHorizon, uSkyMid: U.uSkyMid, uCol: { value: new THREE.Color(color || '#ffffff') }, uTint: { value: color ? 1 : 0 },
+        uOp: { value: opacity }, uBox: { value: new THREE.Vector4(cx, cz, hx, hz) }, uReach: { value: new THREE.Vector3(inner, reach, scale) } },
+      vertexShader: /* glsl */`attribute float aLayer; varying vec3 vW; varying float vL;
+        void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vL = aLayer; gl_Position = projectionMatrix * viewMatrix * w; }`,
+      fragmentShader: /* glsl */`uniform float uTime, uTint, uOp; uniform vec3 uHorizon, uSkyMid, uCol, uReach; uniform vec4 uBox; varying vec3 vW; varying float vL;
+        float h2(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+        float vn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h2(i), h2(i + vec2(1.0, 0.0)), u.x), mix(h2(i + vec2(0.0, 1.0)), h2(i + vec2(1.0, 1.0)), u.x), u.y); }
+        void main(){
+          vec2 q = abs(vW.xz - uBox.xy) - uBox.zw;
+          float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);           // metres outside the arena's box
+          float mask = smoothstep(uReach.x, uReach.x + 14.0, d) * (1.0 - smoothstep(uReach.y * 0.65, uReach.y, d));
+          vec2 p = vW.xz * uReach.z + vec2(uTime * 0.012, uTime * 0.007) * (1.0 + vL * 0.4) + vL * 7.3;
+          float n = vn(p) * 0.55 + vn(p * 2.3 + 4.1) * 0.3 + vn(p * 5.1 - 2.7) * 0.15;
+          float a = smoothstep(0.34, 0.78, n) * mask * uOp;
+          vec3 V = normalize(vW - cameraPosition);
+          a *= clamp(0.2 / max(abs(V.y), 0.02), 0.55, 3.0);                   // a layer seen edge-on is thicker
+          a = min(a, 0.8);
+          if (a < 0.004) discard;
+          vec3 col = mix(mix(uHorizon, uSkyMid, 0.25) * 1.05, uCol, uTint);
+          gl_FragColor = vec4(col, a); }`,
+      transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.name = 'Mist';
+    mesh.renderOrder = 7990;
+    return mesh;
+  }
+
+  // stars: points on the far plane (like the sky dome), fading in with the dusk themes' night amount
+  _makeStars({ count = 1400, size = 1.6 } = {}) {
+    const rnd = mulberry(4242), pos = new Float32Array(count * 3), ph = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const y = 0.06 + Math.pow(rnd(), 0.8) * 0.94, a = rnd() * Math.PI * 2, r = Math.sqrt(1 - y * y);
+      pos[i * 3] = Math.cos(a) * r; pos[i * 3 + 1] = y; pos[i * 3 + 2] = Math.sin(a) * r; ph[i] = rnd();
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aPh', new THREE.BufferAttribute(ph, 1));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: this.U.uTime, uK: { value: 0 }, uSize: { value: size } },
+      vertexShader: /* glsl */`uniform float uTime, uSize; attribute float aPh; varying float vA;
+        void main(){ vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0); gl_Position = vec4(p.xy, p.w * 0.99998, p.w);
+          vA = (0.35 + 0.65 * aPh * aPh) * (0.75 + 0.25 * sin(uTime * (1.5 + aPh * 3.0) + aPh * 60.0)) * smoothstep(0.05, 0.3, position.y);
+          gl_PointSize = uSize * (0.6 + aPh * 1.2); }`,
+      fragmentShader: /* glsl */`uniform float uK; varying float vA;
+        void main(){ float a = smoothstep(0.5, 0.0, length(gl_PointCoord - 0.5)) * vA * uK; if (a < 0.01) discard; gl_FragColor = vec4(vec3(1.0, 0.97, 0.92) * a * 1.6, 1.0); }`,
+      transparent: true, depthWrite: false, depthTest: true, depthFunc: THREE.LessEqualDepth, blending: THREE.AdditiveBlending, fog: false,
+    });
+    const pts = new THREE.Points(g, m);
+    pts.name = 'Stars';
+    pts.renderOrder = 9001;
+    return pts;
+  }
+
   setTheme(name) {
-    const T = THEMES[name] || THEMES.day;
+    const T = this._stageTheme(name);
     const r0 = this.renderer;
     this.theme = THEMES[name] ? name : 'day';
+    this._lookEnv = this._stageEnv();
     const U = this.U;
     const el = T.sunEl * DEG, az = T.sunAz * DEG;
     U.uSunDir.value.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize();
@@ -3038,7 +3257,8 @@ export class Environment {
     this.scene.environmentIntensity = T.envK ?? 0.66;
     this.fogColor.copy(U.uHorizon.value).lerp(U.uSkyMid.value, 0.15);
     if (this.scene.fog && this.scene.fog.isFog) { this.scene.fog.color.copy(this.fogColor); this.scene.fog.near = T.fog[0]; this.scene.fog.far = T.fog[1]; }
-    this.lhBeam.visible = T.night > 0.01;
+    this.lhBeam.visible = T.night > 0.01 && this.bay.visible;
+    if (this.stars) this.stars.material.uniforms.uK.value = T.night * (T.stars ?? 1);
     this._fitShadow();
     const cc = r0.getClearColor(new THREE.Color()), ca = r0.getClearAlpha();
     this._bakeClouds(T);
@@ -3053,7 +3273,9 @@ export class Environment {
     this._frameId++;
     this.U.uTime.value = this.time;
     if (camera) this.sky.position.copy(camera.position);
+    if (camera && this.snowFx) this.snowFx.material.uniforms.uCam.value.copy(camera.position);
     this._animate(dt);
+    if (this._backdropAnim) this._backdropAnim(this.time);
   }
 
   _animate() {
@@ -3066,7 +3288,7 @@ export class Environment {
       m.mesh.rotation.x = 0.012 * Math.sin(t * 0.7 + m.phase * 2);
     }
     // sailboats circle the bay slowly
-    for (let i = 0; i < this.sailboats.length; i++) {
+    for (let i = 0; this.sailInst.visible && i < this.sailboats.length; i++) {
       const s = this.sailboats[i];
       const a = s.a + s.w * t;
       const x = Math.cos(a) * s.d, z = Math.sin(a) * s.d;

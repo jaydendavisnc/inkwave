@@ -758,6 +758,10 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-main__descdot { flex: none; width: .62em; height: .62em; border-radius: 50%; background: var(--a); box-shadow: 0 0 0 2px var(--k); animation: iw-descdot 1.6s ease-in-out infinite; }
 @keyframes iw-descdot { 50% { scale: 1.35; box-shadow: 0 0 0 2px var(--k), 0 0 10px var(--a); } }
 .iw-main__desc.is-swap .iw-main__desctext { animation: iw-tip-in .35s var(--spring); }
+/* QUIT GAME (desktop app only): a compact danger pill leading the main menu's prompt row (bottom right) */
+.iw-btn--quitgame { margin-right: calc(var(--u) * .6); height: calc(var(--u) * 3.1); padding: 0 calc(var(--u) * 1.3) 0 calc(var(--u) * 1); font-size: calc(var(--u) * 1.45); gap: .5em;
+  --bg: #2a1f33; --fill: #ff5a6e; --fill-ink: #fff; color: #ffd9de; }
+.iw-btn--quitgame svg { width: 1.1em; height: 1.1em; }
 .iw-profile__emblem { display: block; flex: none; width: 1.75em; height: 1.75em; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .4)); }
 .iw-profile__emblem svg { width: 100%; height: 100%; }
 .iw-profile__stats .iw-profile__next { flex: 1.15; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3em; background: rgba(var(--a-rgb), .14); box-shadow: inset 0 0 0 1.5px rgba(var(--a-rgb), .35); }
@@ -2543,6 +2547,7 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 /* Zone Control rooms: the longer headline, and the fixed 5:00 + overtime in place of the length picker */
 .iw-lobby.is-zonemode .iw-lob__mode { font-size: calc(var(--u) * 1.62); }
 .iw-lobby.is-zonemode .iw-lock { max-width: 42%; }
+.iw-lobby.is-towermode .iw-lob__mode { font-size: calc(var(--u) * 1.45); }
 .iw-lset--len.is-locked .iw-seg { display: none; }
 .iw-lset--len.is-locked .iw-lenlock { display: flex; }
 
@@ -2776,3 +2781,18 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-mode__zone { display: block; width: calc(var(--u) * 8); height: calc(var(--u) * 8); color: #fff; filter: drop-shadow(0 calc(var(--u) * .35) 0 var(--k)); }
 .iw-mode__zone svg { width: 100%; height: 100%; }
 .iw-mode--zones.is-focus .iw-mode__zone { animation: iw-mode-bob 1.2s ease-in-out infinite .25s; }
+.iw-mode--tower { --mc: #3fd8b8; --mc-rgb: 63, 216, 184; --mc-l: #a6f2e0; --mc-d: #147a66; --mc-ink: #00281f; }
+.iw-mode--tower .iw-mode__tape .iw-display { color: #00281f; }
+.iw-mode--tower.is-focus .iw-mode__zone { animation: iw-mode-bob 1.2s ease-in-out infinite .25s; }
+/* four modes (Turf War · Zone Control · Tower Command · Boss Battle): narrower, taller cards */
+.iw-modesel__row.is-four { gap: calc(var(--u) * 1.5); }
+.iw-modesel__row.is-four .iw-mode { width: calc(var(--u) * 21.6); height: calc(var(--u) * 37); }
+.iw-modesel__row.is-four .iw-mode__tape { top: calc(52% - var(--u) * 2.3); white-space: nowrap; padding-right: calc(var(--u) * 1.1); }
+.iw-modesel__row.is-four .iw-mode__art { height: 52%; }
+.iw-modesel__row.is-four .iw-mode__hero.is-boss { width: calc(var(--u) * 21); }
+.iw-modesel__row.is-four .iw-mode__splat { width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+.iw-modesel__row.is-four .iw-mode__squid { width: calc(var(--u) * 7.2); height: calc(var(--u) * 7.2); }
+.iw-modesel__row.is-four .iw-mode__zone { width: calc(var(--u) * 6.4); height: calc(var(--u) * 6.4); }
+.iw-modesel__row.is-four .iw-mode__tape .iw-display { font-size: calc(var(--u) * 1.95); }
+.iw-modesel__row.is-four .iw-mode__blurb { margin-top: calc(var(--u) * 2.6); font-size: calc(var(--fs-s) * .92); }
+.iw-modesel__row.is-four .iw-mode.is-focus .iw-mode__chips { padding-right: 0; padding-bottom: calc(var(--u) * 3.6); }

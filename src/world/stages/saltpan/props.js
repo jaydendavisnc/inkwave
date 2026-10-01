@@ -8,6 +8,8 @@
 // treat local z = 0 as the wall face and project toward +Z. Runs (rails, posts, railings) extend along local +X.
 // Palette: bleached silver timber, salt white, pink brine, faded oxide red, rust and galvanised steel — muted, so the
 // team inks stay the loudest thing on screen. Signage uses 3D channel / painted letters from a small stroke font.
+import { STRETCH } from './layout.js';
+
 const P = Math.PI;
 
 export function register(D, H) {
@@ -516,16 +518,17 @@ export function register(D, H) {
         pbox(B, NS('wood'), K.timberOld, 0.1, 0.12, W - 0.1, x, -0.22, 0);
       }
       for (const side of o.rail === 2 ? [1, -1] : o.rail ? [o.rail] : []) {
-        const z = side * (W / 2 - 0.08), m = Math.max(1, Math.round(L / 2.4));
+        // (railTo: the handrail stops short of the far end, where the Tower Command track crosses the landing)
+        const z = side * (W / 2 - 0.08), RL = Math.min(L, o.railTo ?? L), m = Math.max(1, Math.round(RL / 2.4));
         const tops = [];
         for (let i = 0; i <= m; i++) {
-          const x = 0.15 + (i / m) * (L - 0.3);
+          const x = 0.15 + (i / m) * (RL - 0.3);
           B.box('wood', K.timberDk, 0.09, 1.02, 0.09, x, 0.51, z, { r: 0.015 });
           B.box(NS('wood'), K.timberDk, 0.13, 0.04, 0.13, x, 1.04, z, { r: 0.01 });
           tops.push([x, 0.98, z]);
         }
         for (let i = 0; i < m; i++) sag(B, NS('paint'), K.rope, tops[i], tops[i + 1], 0.12, 0.018, 6);
-        railCols(B, [0.1, 0, z], [L - 0.1, 0, z], 1.06, 0.12, 99);   // turned placements keep a turned collider (engine)
+        railCols(B, [0.1, 0, z], [RL - 0.1, 0, z], 1.06, 0.12, 99);   // turned placements keep a turned collider (engine)
         if (o.lamps) for (let i = 1; i < tops.length; i += 2) { const t = tops[i]; B.cyl('metal', K.iron, 0.05, 0.1, t[0], t[1] + 0.13, t[2], { seg: 8 }); B.sph('glow', K.lamp, 0.045, t[0], t[1] + 0.2, t[2], { ws: 8, hs: 6, glow: 1.8 }); B.cyl(NS('metal'), K.iron, 0.06, 0.02, t[0], t[1] + 0.25, t[2], { seg: 8 }); }
       }
     },
@@ -809,8 +812,9 @@ export function register(D, H) {
         B.cyl('glow', K.lamp, 0.1, 0.01, 0, -0.115, 0.22, { seg: 10, glow: 1.8 });
         B.pop();
       }
-      // the braced bottom bay of the tower is see-through: a rail on each face keeps kids out of the lattice
-      for (const [ax, az, bx, bz] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]]) railCols(B, [ax * 1.2, 0, az * 1.2], [bx * 1.2, 0, bz * 1.2], 2.4, 0.16, 99);
+      // the braced bottom bay of the tower is see-through: a rail on each face keeps kids out of the lattice (not up on
+      // the Tower Command trestle, `raised`: nobody walks up there)
+      if (!o.raised) for (const [ax, az, bx, bz] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]]) railCols(B, [ax * 1.2, 0, az * 1.2], [bx * 1.2, 0, bz * 1.2], 2.4, 0.16, 99);
       // ladder up the -X face
       for (const k of [-0.2, 0.2]) pbeam(B, NS('metal'), stlDk, [-half(0.3) - 0.05, 0.3, k], [-half(Ht) - 0.05, Ht, k], 0.03, 0.03);
       for (let y = 0.6; y < Ht; y += 0.32) pbox(B, NS('metal'), stlDk, 0.025, 0.025, 0.4, -half(y) - 0.05, y, 0);
@@ -841,6 +845,59 @@ export function register(D, H) {
       B.blob(3.4, 3.4);
     },
   };
+  // Tower Command: the wind pump raised on a timber trestle over the staging, so the tower starts underneath it and rolls
+  // out (its track leaves the centre +Z, then runs out along the ±X boardwalks). Stage-centre coordinates (place at
+  // [0, 0.08, 0], mirror: false). Two braced bents stand at the staging's ±Z edges (x ±1.25, z ±3.2) — clear of the
+  // tower's sweep — and carry two stringers along Z with a plank deck in the middle; the pump stands on the stringers.
+  // Everything over the tower is ≥ 4.0 m up: the stringers' undersides (the tower needs TOWER_HEAD, 3.72 m, over its
+  // base; the caps are lower but stand outside its sweep).
+  D.saltpan_trestle = {
+    desc: 'Wind-pump trestle (Tower Command): two tarred timber bents (posts, cap beam, X-bracing, knee braces, iron straps) at z ±3.2, two stringers along Z and a plank deck at `top` (4.3 m) carrying the brine wind pump (raised), work lamps under the caps. Posts, caps, stringers and deck collide (roof); the bracing is a rail.',
+    params: { top: 'deck top m (4.3; the caps 0.55 and the stringers 0.3 below it)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const T = o.top ?? 4.3, px = 1.25, pz = 3.2, capY = T - 0.55, sY = T - 0.3, tb = K.timberDk;
+      for (const sz of [-1, 1]) {
+        const z = sz * pz;
+        // posts: tarred, salt-crusted feet, iron straps
+        for (const sx of [-1, 1]) {
+          const x = sx * px;
+          B.box('wood', shade(K.tar, sx * sz > 0 ? 1.05 : 1.2), 0.28, capY, 0.28, x, capY / 2, z, { r: 0.03 });
+          pbox(B, NS('paint'), K.salt, 0.3, 0.08, 0.3, x, 0.04, z);
+          for (const y of [0.9, capY / 2 + 0.4, capY - 0.75]) pbox(B, NS('metal'), K.rustDk, 0.3, 0.06, 0.3, x, y, z);
+          B.col(x - 0.14, 0, z - 0.14, x + 0.14, capY, z + 0.14, { roof: true });
+          // knee brace post → cap (in the bent's plane)
+          beam(B, 'wood', tb, [x, capY - 0.75, z], [x * 0.45, capY - 0.02, z], 0.14, 0.12);
+        }
+        // cap beam
+        B.box('wood', tb, px * 2 + 0.5, sY - capY, 0.32, 0, (capY + sY) / 2, z, { r: 0.025 });
+        B.col(-px - 0.25, capY, z - 0.16, px + 0.25, sY, z + 0.16, { roof: true });
+        // X-bracing + a low tie between the posts (the brace plane is a rail: kids can't walk through the bent)
+        beam(B, 'wood', K.timberOld, [-px + 0.1, 0.35, z + sz * 0.16], [px - 0.1, capY - 0.35, z + sz * 0.16], 0.1, 0.08);
+        beam(B, 'wood', K.timberOld, [px - 0.1, 0.35, z - sz * 0.16], [-px + 0.1, capY - 0.35, z - sz * 0.16], 0.1, 0.08);
+        pbox(B, 'wood', K.timberOld, px * 2, 0.16, 0.08, 0, 0.45, z + sz * 0.16);
+        B.col(-px + 0.14, 0, z - 0.2, px - 0.14, capY, z + 0.2, { rail: true });
+        // a work lamp under the cap, lighting the tower's start at dusk
+        dishLamp(B, 0, capY - 0.12, z - sz * 0.05, 0.2);
+      }
+      // stringers along Z on the caps, cross joists + a plank deck in the middle under the pump
+      for (const sx of [-1, 1]) {
+        B.box('wood', tb, 0.28, T - sY, pz * 2 + 0.5, sx * px, (sY + T) / 2, 0, { r: 0.025 });
+        for (const z of [-pz, -1.3, 1.3, pz]) pbox(B, NS('metal'), K.rustDk, 0.3, T - sY + 0.02, 0.06, sx * px, (sY + T) / 2, z);
+        B.col(sx * px - 0.14, sY, -pz - 0.25, sx * px + 0.14, T, pz + 0.25, { roof: true });
+      }
+      for (const z of [-1.5, -0.5, 0.5, 1.5]) pbox(B, 'wood', K.timberOld, px * 2 - 0.28, 0.2, 0.14, 0, sY + 0.12, z);
+      for (let k = 0; k < 11; k++) pbox(B, 'wood', shade(K.timber, 0.92 + (k % 3) * 0.05), px * 2 - 0.28, 0.06, 0.29, 0, T - 0.03, -1.6 + 0.16 + k * 0.29);
+      B.col(-px + 0.14, T - 0.08, -1.62, px - 0.14, T, 1.62, { roof: true });
+      // the pump man's ladder up the outside of the +Z bent (clear of the tower's sweep)
+      for (const k of [-0.2, 0.2]) pbox(B, NS('metal'), K.iron, 0.04, T + 0.9, 0.04, -px + 0.45 + k, (T + 0.9) / 2, pz + 0.3);
+      for (let y = 0.3; y < T + 0.6; y += 0.3) pbox(B, NS('metal'), K.iron, 0.4, 0.025, 0.025, -px + 0.45, y, pz + 0.3);
+      for (const k of [-0.2, 0.2]) pbox(B, NS('metal'), K.iron, 0.04, 0.04, 0.2, -px + 0.45 + k, 2.2, pz + 0.2);
+      B.blob(3.2, 7.4);
+      // the pump itself on the stringers (its bottom-bay rails stay off: nobody walks up here)
+      sub(B, 'saltpan_windpump', 0, T, 0, 0, { raised: true });
+    },
+  };
+
   // brine launder: open timber trough on trestles along +X (top rim at `height`), fed by the pump
   D.saltpan_launder = {
     desc: 'Brine launder: an open timber trough (0.4 m wide) on trestles along local +X at rim height `height`, pink brine inside, drips of salt crust on the outside, a spout at the far end. Collides.',
@@ -861,7 +918,7 @@ export function register(D, H) {
     },
   };
   D.saltpan_tank = {
-    desc: 'Brine header tank: corrugated-iron round tank (1.9 m) with a conical lid and hatch on a timber stand (1.2 m), outlet pipe and valve wheel, a ladder, salt-crusted drips. Collides.',
+    desc: 'Brine header tank: corrugated-iron round tank (1.9 m) with a conical lid and hatch on a timber stand (1.2 m), outlet pipe and valve wheel, a ladder, salt-crusted drips. Collides (roof-flagged: nobody stands on the tank).',
     params: {}, variants: 1, mount: 'ground',
     build(B, o) {
       const R = 0.95, y0 = 1.25, Ht = 1.3;
@@ -878,7 +935,7 @@ export function register(D, H) {
       B.tor(NS('metal'), K.red, 0.1, 0.012, 0.12, 0.8, R + 0.28, { ry: HP, rs: 3, ts: 12 });
       for (const k of [-0.18, 0.18]) pbeam(B, NS('metal'), K.iron, [-R - 0.1, 0.0, k], [-R - 0.05, y0 + Ht + 0.1, k], 0.03, 0.03);
       for (let y = 0.3; y < y0 + Ht; y += 0.3) pbox(B, NS('metal'), K.iron, 0.03, 0.02, 0.36, -R - 0.08, y, 0);
-      B.col(-1.0, 0, -1.0, 1.0, y0 + Ht + 0.3, 1.0); B.blob(2.4, 2.4);
+      B.col(-1.0, 0, -1.0, 1.0, y0 + Ht + 0.3, 1.0, { roof: true }); B.blob(2.4, 2.4);   // (nobody stands on the tank)
     },
   };
 
@@ -905,10 +962,12 @@ export function register(D, H) {
   }
   D.saltpan_gantry = {
     desc: 'Conveyor gantry feeding the salt heap (stage coordinates, place at the origin): lattice trestle bents under the catwalk, head platform and incline, troughed belt carrying salt from the tail hopper up the incline and along the catwalk to the head drum, discharge chute with a salt stream onto the heap ridge, corrugated drive house on the head platform, galvanised handrails, hopper funnel with a grizzly. Legs, belt frame, drive house and funnel collide.',
-    params: {}, variants: 1, mount: 'ground',
+    params: { headBent: 'z of the open bent under the head platform (-9.8)', headEdge: 'z of the head platform\'s mid edge (-9.5; layout.js gantry-head)' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = 0;
       const stl = '#8e979b', stlDk = '#6d7478', rail = '#b4babf';
+      // (Tower Command cuts the head platform's mid edge back, `headEdge`: its edge stringer and handrail come with it)
+      const dE = (o.headEdge ?? -9.5) + 9.5;
       const bent = (z, xs, top, foot = 0, open = false) => {
         for (const x of xs) {
           B.box('metal', stl, 0.16, top - foot, 0.16, x, foot + (top - foot) / 2, z, { r: 0.02 });
@@ -924,7 +983,9 @@ export function register(D, H) {
         }
       };
       for (const z of [-25.7, -21.4, -17.2, -13.3]) bent(z, [20.2, 22.3], 3.35);
-      bent(-9.8, [16.3, 19.3, 22.2], 3.35, 0, true);
+      // the open bent under the head platform's mid edge (Tower Command moves it back, `headBent`, so the tower's
+      // track along the dyke below passes its legs)
+      bent(o.headBent ?? -9.8, [16.3, 19.3, 22.2], 3.35, 0, true);
       for (const x of [16.3, 19.3]) { B.box('metal', stl, 0.16, 3.35, 0.16, x, 1.675, -12.75, { r: 0.02 }); B.col(x - 0.11, 0, -12.86, x + 0.11, 3.35, -12.64); }
       for (const z of [-33.2, -29.8]) bent(z, [20.2, 22.3], yInc(z) - 0.28);
       // the strip under the catwalk + incline is closed off by longitudinal X-bracing between the bents (colliders keep
@@ -947,7 +1008,7 @@ export function register(D, H) {
       rodT(B, NS('metal'), stlDk, P3(20.2, 0.2, -13.3), P3(22.3, 3.1, -13.3), 0.02, 4); rodT(B, NS('metal'), stlDk, P3(22.3, 0.2, -13.3), P3(20.2, 3.1, -13.3), 0.02, 4);
       // longitudinal stringers under the catwalk / head
       for (const x of [20.15, 22.3]) pbox(B, 'metal', stlDk, 0.1, 0.24, 13.2, x, 3.22, -19.5);
-      for (const z of [-12.9, -9.6]) pbox(B, 'metal', stlDk, 6.45, 0.24, 0.1, 19.22, 3.22, z);
+      for (const z of [-12.9, -9.6 + dE]) pbox(B, 'metal', stlDk, 6.45, 0.24, 0.1, 19.22, 3.22, z);
       for (const x of [20.15, 22.3]) { B.push(x, yInc(-30.8) - 0.3, -30.8, 0, -Math.atan2(3.6, 9.6)); pbox(B, 'metal', stlDk, 0.1, 0.22, 10.2, 0, 0, 0); B.pop(); }
       // handrails: outer edge of incline + catwalk + head platform (north + east)
       const railRun = (pts) => {
@@ -962,14 +1023,14 @@ export function register(D, H) {
       };
       const inc = []; for (let z = -35.2; z <= -26.05; z += 1.53) inc.push([22.36, yInc(z), z]);
       inc.push([22.36, 3.6, -26]);
-      const cw = []; for (let z = -26; z <= -9.7; z += 1.63) cw.push([22.36, 3.6, z]);
-      cw.push([22.36, 3.6, -9.62]);
+      const cw = []; for (let z = -26; z <= -9.7 + dE; z += 1.63) cw.push([22.36, 3.6, z]);
+      cw.push([22.36, 3.6, -9.62 + dE]);
       railRun([...inc, ...cw.slice(1)]);
       for (const p of [...inc.filter((_, i) => i % 2), ...cw.filter((_, i) => i % 3 === 1)]) {
         pbox(B, NS('metal'), K.iron, 0.1, 0.14, 0.08, p[0] - 0.06, p[1] + 0.82, p[2]);
         B.box('glow', K.lamp, 0.02, 0.09, 0.09, p[0] - 0.115, p[1] + 0.82, p[2], { r: 0.01, glow: 1.6 });
       }
-      railRun([[22.36, 3.6, -9.62], [20.8, 3.6, -9.62], [19.3, 3.6, -9.62]]);
+      railRun([[22.36, 3.6, -9.62 + dE], [20.8, 3.6, -9.62 + dE], [19.3, 3.6, -9.62 + dE]]);
       // belt: hopper tail → incline → catwalk → head drum
       beltRun(B, -36.4, 1.05, -26.2, 4.18, 20.45);
       beltRun(B, -26.2, 4.18, -14.2, 4.18, 20.45);
@@ -1522,8 +1583,10 @@ export function register(D, H) {
       const e = s - 0.1;
       kerb(-e, -e, 1.2, -e); kerb(3.4, -e, e, -e);
       kerb(-e, e, -3.4, e); kerb(-1.2, e, e, e);
-      kerb(e, -e, e, -2.8); kerb(e, -0.6, e, e);
-      kerb(-e, e, -e, 2.8); kerb(-e, 0.6, -e, -e);
+      // (Tower Command, `track`: the ±X gaps open wider — the tower leaves the staging there, 2.5 m wide)
+      const g0 = o.track ? 0.3 : 0.6, g1 = o.track ? 3.1 : 2.8;
+      kerb(e, -e, e, -g1); kerb(e, -g0, e, e);
+      kerb(-e, e, -e, g1); kerb(-e, g0, -e, -e);
       for (const [x, z] of [[-e, -e], [e, -e], [e, e], [-e, e]]) B.lathe('metal', K.iron, [[0.14, 0], [0.13, 0.35], [0.17, 0.4], [0.17, 0.46], [0, 0.48]], x, y, z, { seg: 10 });
       B.box('wood', '#6f8583', 0.9, 0.5, 0.5, -2.3, y + 0.25, -2.6, { r: 0.03 });
       pbox(B, NS('metal'), K.iron, 0.94, 0.04, 0.54, -2.3, y + 0.42, -2.6);
@@ -1633,34 +1696,267 @@ export function register(D, H) {
       }
     },
   };
+
+  // ================================================================================================ the slice (Long Stages)
+  // The new land between the pans and the base (layout.js SLICE, 2026-09-30): the brine pump house, its loading
+  // platform, the salt cones and the stacker in the cone yard, a coal bin. The first two are authored in Alpha-half
+  // stage coordinates (place at the origin, like the store and the gantry).
+
+  // round-arched window on a wall at z = 0 facing +Z (opening w × h, sill at y, centred at x): stone surround with a
+  // keystone, small-paned iron glazing
+  const archGeo = (w, h) => tpl(['arch', w, h].map(kf).join('|'), () => {
+    const r = w / 2, pts = [[-r, 0], [r, 0]];
+    for (let k = 0; k <= 10; k++) { const a = (k / 10) * PI; pts.push([Math.cos(a) * r, h - r + Math.sin(a) * r]); }
+    const sh = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
+    return new THREE.ShapeGeometry(sh, 6);
+  });
+  function archWin(B, x, y, w, h, o = {}) {
+    const r = w / 2, stone = o.stone ?? '#d8cfbd';
+    B.add(NS('gloss'), archGeo(w, h), o.glass ?? K.glass, x, y, 0.012, {});
+    if (o.lit) B.add(NS('glow'), archGeo(w - 0.1, h * 0.5), K.lamp, x, y + 0.04, 0.016, { glow: o.lit });
+    for (let k = 1; k < 3; k++) pbox(B, NS('paint'), K.iron, 0.03, h - 0.05, 0.02, x - r + (k * w) / 3, y + (h - 0.05) / 2, 0.02);
+    for (let k = 1; k < 4; k++) pbox(B, NS('paint'), K.iron, w, 0.03, 0.02, x, y + (k * (h - r)) / 4, 0.02);
+    for (const sx of [-1, 1]) pbox(B, 'paint', stone, 0.14, h - r, 0.07, x + sx * (r + 0.07), y + (h - r) / 2, 0.035);
+    for (let k = 0; k <= 6; k++) { const a = (k / 6) * PI; pbox(B, 'paint', k === 3 ? shade(stone, 1.06) : stone, k === 3 ? 0.2 : 0.16, 0.2, 0.08, x + Math.cos(a) * (r + 0.07), y + h - r + Math.sin(a) * (r + 0.07), 0.04, { rz: a - HP }); }
+    pbox(B, 'paint', stone, w + 0.34, 0.1, 0.12, x, y - 0.05, 0.06);
+  }
+
+  // ------------------------------------------------------------------------------------------ the brine pump house
+  // Stage coordinates (place at the origin). Level block x -23…-17 / z -45…-39, walls to 5.0 (layout.js pump-house:
+  // brick, ground floor inkable to 2.8, the upper walls out of play). North gable toward mid; the chimney stack rises
+  // through the roof's south end; the rising main crosses the rail spur to the header tank on the loading platform
+  // (x -11.2, z -42.3, on the stage at 1.5); the suction pipe drops into the intake bay (x -30…-26, z -43…-37).
+  D.saltpan_pumphouse = {
+    desc: 'The brine pump house (stage coordinates, place at the origin): brick engine house with stone quoins, plinth and a string course at the inkable line, tall round-arched iron windows, a double door onto the rail spur, a slate roof with a lead ridge and a north gable lettered PUMPING STATION No 2 · 1902 over an oculus, the tall square chimney stack of the boiler rising through the roof, the rising main on a steel post across the spur to the header tank on the loading platform, the suction pipe with a strainer down into the intake bay, a coal heap against the south wall. Roof, chimney, pipe post and coal heap collide.',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = 0;
+      const x0 = -23, x1 = -17, z0 = -45, z1 = -39, Hw = 5.0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, apex = 7.3;
+      const brick = '#bba486', brickDk = '#95574a', stone = '#e0d8c6', slate = '#59636c';
+      // stone plinth, string course at the inkable line (2.8), eaves cornice, quoins
+      for (const [w, d, x, z] of [[x1 - x0 + 0.1, 0.06, cx, z0 - 0.03], [x1 - x0 + 0.1, 0.06, cx, z1 + 0.03], [0.06, z1 - z0 + 0.1, x0 - 0.03, cz], [0.06, z1 - z0 + 0.1, x1 + 0.03, cz]]) {
+        pbox(B, 'paint', stone, w, 0.42, d, x, 0.21, z);
+        pbox(B, 'paint', stone, w + (d > 0.05 && w < 0.1 ? 0 : 0.06), 0.14, d + 0.03, x, 2.87, z);
+        pbox(B, 'paint', stone, w + 0.1, 0.22, d + 0.1, x, Hw - 0.11, z);
+      }
+      for (const x of [x0, x1]) for (const z of [z0, z1]) for (let k = 0; k < 9; k++) {
+        const y = 0.5 + k * 0.5, big = k % 2 === 0, sx = x === x0 ? 1 : -1, sz = z === z0 ? 1 : -1;
+        pbox(B, 'paint', shade(stone, 0.97 + (k % 3) * 0.02), big ? 0.44 : 0.26, 0.42, 0.05, x + sx * ((big ? 0.44 : 0.26) / 2 - 0.02), y + 0.21, z - sz * 0.025);
+        pbox(B, 'paint', shade(stone, 0.97 + (k % 3) * 0.02), 0.05, 0.42, big ? 0.26 : 0.44, x - sx * 0.025, y + 0.21, z + sz * ((big ? 0.26 : 0.44) / 2 - 0.02));
+      }
+      // walls' faces: windows, doors, lettering (each face in its own frame, local +Z out of the wall)
+      const face = (x, z, ry, fn) => { B.push(x, 0, z, ry); fn(); B.pop(); };
+      face(cx, z1, 0, () => {          // north (toward mid): the lettered panel, a tall window, the oculus in the gable
+        archWin(B, 0, 3.05, 1.1, 1.75, { lit: 0.5 });
+        pbox(B, 'paint', stone, 3.9, 0.52, 0.06, 0, 4.63, 0.03);
+        letters(B, 'PUMPING STATION No 2', { h: 0.2, x: 0, y: 4.55, z: 0.065, c: '#5d3a31', flat: true, wt: 0.2, track: 0.1 });
+        for (const sx of [-1.75, 1.75]) pbox(B, NS('paint'), '#5d3a31', 0.08, 0.08, 0.01, sx, 4.63, 0.065);
+        B.cyl('paint', stone, 0.52, 0.08, 0, 6.05, 0.0, { rx: HP, seg: 18 });
+        B.cyl(NS('gloss'), K.glass, 0.4, 0.02, 0, 6.05, 0.04, { rx: HP, seg: 18 });
+        pbox(B, NS('paint'), K.iron, 0.8, 0.03, 0.02, 0, 6.05, 0.055); pbox(B, NS('paint'), K.iron, 0.03, 0.8, 0.02, 0, 6.05, 0.055);
+        letters(B, '1902', { h: 0.2, x: 0, y: 5.25, z: 0.03, c: stone, dep: 0.03, wt: 0.2, mat: 'paint' });
+      });
+      face(cx, z0, PI, () => {         // south: a plain door by the coal heap, a window
+        ledgedDoor(B, 1.6, 0, 1.2, 2.3, '#5f7b78', {});
+        archWin(B, -1.2, 3.05, 0.9, 1.6, {});
+      });
+      face(x1, cz, HP, () => {         // east (onto the rail spur): the double door, two tall windows, a wall lamp
+        for (const sx of [-0.55, 0.55]) ledgedDoor(B, sx, 0, 1.1, 2.55, '#5f7b78', {});
+        pbox(B, 'paint', stone, 2.5, 0.16, 0.08, 0, 2.63, 0.04);
+        for (const x of [-2.05, 2.05]) archWin(B, x, 3.05, 1.0, 1.75, { lit: 0.45 });
+        B.push(0, 3.35, 0); D.saltpan_lamp.build(B, { variant: 1 }); B.pop(); B.aoBase = 0;
+      });
+      face(x0, cz, -HP, () => {        // west (the intake bay): two tall windows
+        for (const x of [-1.6, 1.6]) archWin(B, x, 3.05, 1.0, 1.75, {});
+      });
+      // gables: brick triangles above the cornice, stone copings
+      const gw = (x1 - x0) / 2 + 0.3, pitch = Math.atan2(apex - Hw, gw);
+      const gab = tpl('pgable', () => extrudeGeo([[-gw + 0.3, 0], [gw - 0.3, 0], [0, apex - Hw - 0.25]], 0.3, 0.01));
+      for (const z of [z0 + 0.15, z1 - 0.15]) B.add('paint', gab, brick, cx, Hw, z, { ry: HP });
+      for (const z of [z0 - 0.05, z1 + 0.05]) for (const s of [-1, 1]) pbeam(B, 'paint', stone, [cx + s * gw, Hw + 0.05, z], [cx, apex + 0.1, z], 0.36, 0.14);
+      // slate roof (ridge along Z), lead ridge roll, a roof light
+      const sl = Math.hypot(gw, apex - Hw) + 0.1, dep = z1 - z0 + 0.5;
+      for (const s of [-1, 1]) {
+        B.push(cx + (s * gw) / 2, (Hw + apex) / 2 + 0.06, cz, 0, 0, -s * pitch);
+        pbox(B, 'paint', slate, sl, 0.1, dep, 0, 0, 0);
+        for (let x = -sl / 2 + 0.15; x < sl / 2; x += 0.3) pbox(B, NS('paint'), shade(slate, 0.9), 0.02, 0.02, dep, x, 0.06, 0);
+        if (s > 0) { pbox(B, NS('gloss'), K.glassLt, 1.1, 0.03, 1.6, -0.1, 0.07, -0.6); pbox(B, NS('paint'), K.iron, 1.2, 0.05, 1.7, -0.1, 0.055, -0.6); }
+        B.pop();
+      }
+      B.cyl('metal', '#6b7479', 0.09, dep, cx, apex + 0.08, cz, { rx: HP, seg: 8 });
+      B.col(x0 - 0.35, Hw, z0 - 0.3, x1 + 0.35, apex + 0.2, z1 + 0.3, { roof: true });
+      // the boiler chimney: a tapered square brick stack through the roof's south end, banded, corbelled cap
+      const chx = cx, chz = z0 + 1.1, chB = 5.6, chT = 17.2;
+      B.lathe('paint', brick, [[1.0, 0], [0.98, 0.8], [0.72, chT - chB], [0, chT - chB]], chx, chB, chz, { seg: 4, ry: PI / 4 });
+      for (const y of [4.2, 8.4]) B.lathe(NS('paint'), stone, [[1.0 - y * 0.023, y], [1.05 - y * 0.023, y + 0.12], [0.99 - y * 0.023, y + 0.26]], chx, chB, chz, { seg: 4, ry: PI / 4 });
+      B.lathe('paint', brickDk, [[0.78, chT - chB - 0.05], [0.95, chT - chB + 0.2], [0.95, chT - chB + 0.55], [0.68, chT - chB + 0.6], [0, chT - chB + 0.55]], chx, chB, chz, { seg: 4, ry: PI / 4 });
+      B.col(chx - 0.75, Hw, chz - 0.75, chx + 0.75, chT + 0.6, chz + 0.75, { roof: true });
+      B.blink('#ff3b2a', chx, chT + 0.8, chz, { size: 0.08, rate: 0.4, phase: 2.1, lo: 0.3, hi: 4 });
+      // rising main: out of the east wall at 4.5, across the spur on a steel post, into the header tank's lid
+      const my = 4.55, mz = -42.3;
+      B.tube('metal', '#5d6f74', [P3(x1, my, mz), P3(-15.3, my, mz), P3(-11.9, my, mz), P3(-11.35, my - 0.05, mz), P3(-11.2, my - 0.3, mz)], 0.11, { radial: 8 });
+      for (const x of [-16.4, -14.6, -12.8]) B.cyl(NS('metal'), K.iron, 0.16, 0.06, x, my, mz, { rz: HP, seg: 10 });
+      B.box('metal', K.iron, 0.16, my - 0.1, 0.16, -15.3, (my - 0.1) / 2, mz - 0.25, { r: 0.02 });
+      pbox(B, 'metal', K.iron, 0.5, 0.08, 0.5, -15.3, my - 0.1, mz - 0.1);
+      B.col(-15.4, 0, mz - 0.35, -15.2, my, mz - 0.15, { roof: true });
+      pbox(B, NS('metal'), K.navy, 0.3, 0.3, 0.3, x1 + 0.25, my, mz);
+      B.tor(NS('metal'), K.red, 0.16, 0.018, x1 + 0.25, my + 0.27, mz, { rs: 4, ts: 14 });
+      // suction pipe: out of the west wall at 2.5 (walk under it), over the strip and down into the bay, a strainer
+      const sy = 2.55, sz = -41.2;
+      B.tube('metal', '#5d6f74', [P3(x0, sy, sz), P3(-25.7, sy, sz), P3(-26.25, sy - 0.15, sz), P3(-26.45, sy - 0.8, sz), P3(-26.45, -1.2, sz)], 0.13, { radial: 8 });
+      pbox(B, NS('metal'), K.rustDk, 0.5, 0.6, 0.5, -26.45, -1.45, sz);
+      for (const y of [1.2, -0.2]) pbox(B, NS('metal'), K.iron, 0.9, 0.08, 0.1, -26.1, y, sz);
+      B.cyl(NS('metal'), K.iron, 0.18, 0.06, x0 - 0.05, sy, sz, { rx: HP, seg: 10 });
+      // the coal heap for the boiler against the south wall, in a timber bin
+      for (const [w, d, x, z] of [[3.2, 0.1, cx, z0 - 1.7], [0.1, 1.7, cx - 1.55, z0 - 0.85], [0.1, 1.7, cx + 1.55, z0 - 0.85]]) B.box('wood', K.timberOld, w, 0.9, d, x, 0.45, z, { r: 0.015 });
+      B.add('rubber', moundGeo(3.0, 1.6, 1.15, 4), '#34322f', cx, 0, z0 - 0.85, {});
+      B.col(cx - 1.6, 0, z0 - 1.75, cx + 1.6, 1.0, z0);
+      B.blob(3.6, 2.2, cx, z0 - 0.9);
+    },
+  };
+
+  // ------------------------------------------------------------------------------------------ the loading platform
+  // Stage coordinates (place at the origin). Level stage x -12.5…-4 / z -44…-37 / top 1.5 (layout.js pump-stage), its
+  // north stair x -10…-7 from (0, -33.2) up to (1.5, -37), the east steps z -39…-37.4 from (-0.3, 0) up to (-4, 1.5),
+  // the south ramp x -12.5…-10.5 from (0, -51) up to (1.5, -44).
+  D.saltpan_stage = {
+    desc: 'Loading-platform dressing (stage coordinates, place at the origin): posted timber faces with a sill and a coping, an iron rubbing strip along the rail-spur side, the north stair\'s stringers, newels and handrails (rail colliders), the east steps\' stringers, the south ramp\'s kerbs, a BRINE STAGE board. Non-colliding except the handrails.',
+    params: {}, variants: 1, mount: 'ground',
+    build(B, o) {
+      B.aoBase = 0;
+      const x0 = -12.5, x1 = -4, z0 = -44, z1 = -37, top = 1.5;
+      // coping + sill all round, posts on the faces (skipping the stair / steps openings)
+      for (const [w, d, x, z] of [[x1 - x0 + 0.14, 0.14, (x0 + x1) / 2, z0 - 0.03], [x1 - x0 + 0.14, 0.14, (x0 + x1) / 2, z1 + 0.03], [0.14, z1 - z0, x0 - 0.03, (z0 + z1) / 2], [0.14, z1 - z0, x1 + 0.03, (z0 + z1) / 2]]) {
+        pbox(B, 'wood', K.timberLt, w, 0.1, d, x, top - 0.04, z);
+        pbox(B, NS('wood'), K.tar, w, 0.22, d, x, 0.11, z);
+      }
+      const post = (x, z) => B.box('wood', K.timberOld, 0.18, top - 0.12, 0.18, x, (top - 0.12) / 2, z, { r: 0.02 });
+      for (let x = x0 + 0.1; x <= x1 - 0.09; x += 1.4) { if (x < -10.05 || x > -6.95) post(x, z1 + 0.06); post(x, z0 - 0.06); }
+      for (let z = z0 + 0.1; z <= z1 - 0.09; z += 1.4) { post(x0 - 0.06, z); if (z < -39.05) post(x1 + 0.06, z); }
+      // iron rubbing strip + wagon stops along the spur side
+      pbox(B, 'metal', K.iron, 0.06, 0.12, z1 - z0, x0 - 0.1, 1.1, (z0 + z1) / 2);
+      for (const z of [-42.8, -38.3]) pbox(B, NS('metal'), K.rustDk, 0.14, 0.3, 0.3, x0 - 0.12, 1.05, z);
+      // north stair (x -10…-7): stringers, newels, handrails (the stair's sides take no ink, layout.js)
+      const sy = (z) => (top * (-33.2 - z)) / 3.8;
+      for (const x of [-10.02, -6.98]) {
+        pbeam(B, 'wood', K.timberDk, [x, -0.05, -32.85], [x, top - 0.05, -37.02], 0.1, 0.34);
+        const pts = [[x, 0, -33.3], [x, sy(-34.7), -34.7], [x, sy(-36.1), -36.1], [x, top, -37.1]];
+        for (const p of pts) B.box('wood', K.timberDk, 0.1, 1.0, 0.1, p[0], p[1] + 0.5, p[2], { r: 0.015 });
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const a = pts[i], b = pts[i + 1];
+          pbeam(B, 'wood', K.timberLt, [a[0], a[1] + 1.0, a[2]], [b[0], b[1] + 1.0, b[2]], 0.09, 0.07);
+          pbeam(B, NS('wood'), K.timberDk, [a[0], a[1] + 0.5, a[2]], [b[0], b[1] + 0.5, b[2]], 0.05, 0.05);
+          railCols(B, a, b, 1.05, 0.12, 0.6);
+        }
+        B.box('wood', K.timberDk, 0.2, 1.15, 0.2, x, 0.575, -33.3, { r: 0.03 });
+        B.box(NS('wood'), K.endgrain, 0.26, 0.06, 0.26, x, 1.18, -33.3, { r: 0.01 });
+      }
+      // east steps (z -39…-37.4): stringers only (open steps off the causeway)
+      for (const z of [-39.02, -37.38]) pbeam(B, 'wood', K.timberDk, [0.25, -0.05, z], [-4.02, top - 0.05, z], 0.08, 0.3);
+      // south ramp (x -12.5…-10.5): tarred kerbs along both sides
+      for (const x of [-12.52, -10.48]) pbeam(B, 'wood', K.tar, [x, 0.02, -51.5], [x, top + 0.02, -44], 0.1, 0.16);
+      // the stage's name board on the east face, over the steps
+      B.push(x1 + 0.02, 0, -41.2, HP);
+      boardSign(B, 'BRINE STAGE', 0, 1.0, 0, { h: 0.16, board: '#33405a', c: K.cream, hb: 0.28 });
+      B.pop();
+    },
+  };
+
+  // ------------------------------------------------------------------------------------------ salt cones
+  D.saltpan_cone = {
+    desc: 'Salt cone: a big conical stockpile of harvested salt (radius r, height h) on a ring of tarred heap boards; variant 0 fresh white salt with a shovel stuck in it, 1 under a weighted grey tarp with tyres. The body collides as two stepped boxes, roof-flagged (nobody stands on a cone: you slide off).',
+    params: { r: 'm (2.4)', h: 'm (2.6)' }, variants: 2, mount: 'ground',
+    build(B, o) {
+      const v = (o.variant ?? 0) % 2, R = o.r ?? 2.4, Hh = o.h ?? 2.6;
+      if (v === 0) {
+        mound(B, R * 2, R * 2, Hh, 0, 0, 0, { seed: 3 });
+        rodT(B, 'wood', K.timberLt, P3(R * 0.45, Hh * 0.52, 0.3), P3(R * 0.95, Hh * 0.52 + 0.9, 0.55), 0.02, 5);
+        B.box('metal', K.galvDk, 0.3, 0.02, 0.26, R * 0.42, Hh * 0.5, 0.28, { r: 0.008, rz: 0.9 });
+      } else {
+        const prof = []; for (let k = 0; k <= 8; k++) { const t = k / 8; prof.push([R * 1.02 * (1 - t) + 0.05, Hh * (0.6 * t + 0.4 * (1 - (1 - t) * (1 - t))) * 1.02 + 0.02]); } prof.push([0, Hh + 0.06]);
+        B.lathe('rubber', '#5a6560', prof, 0, 0, 0, { seg: 14 });
+        for (let k = 0; k < 7; k++) { const a = (k / 7) * TAU + 0.3, rr = R * 0.62, t = 1 - (rr - 0.05) / (R * 1.02), h = Hh * (0.6 * t + 0.4 * (1 - (1 - t) * (1 - t))) * 1.02 + 0.04; B.lathe('rubber', '#2d2e31', H.TIRE, Math.cos(a) * rr, h, Math.sin(a) * rr, { seg: 12, closed: true, rz: Math.cos(a) * 0.7, rx: -Math.sin(a) * 0.7 }); }
+        B.lathe('rubber', '#2d2e31', H.TIRE, 0, Hh + 0.02, 0, { seg: 12, closed: true });
+      }
+      // tarred heap boards round the foot
+      for (let k = 0; k < 10; k++) { const a = (k / 10) * TAU; B.box('wood', shade(K.tar, B.r(1.0, 1.4)), R * 0.64, 0.3, 0.07, Math.cos(a) * (R + 0.05), 0.15, Math.sin(a) * (R + 0.05), { ry: -a + HP, r: 0.01 }); }
+      const a = R * 0.78, b = R * 0.46;
+      B.col(-a, 0, -a, a, Hh * 0.5, a, { roof: true });
+      B.col(-b, Hh * 0.5, -b, b, Hh * 0.92, b, { roof: true });
+      B.blob(R * 2.6, R * 2.6);
+    },
+  };
+
+  // ------------------------------------------------------------------------------------------ the stacker
+  // a radial stacker conveyor building a cone: boom along local +X from the tail hopper (x 0, belt 0.9) up to the head
+  // (x L, belt `head`), on a wheeled A-frame; head drum, discharge stream of salt. Tail hopper + A-frame collide (roof).
+  D.saltpan_stacker = {
+    desc: 'Radial stacker conveyor (boom along local +X, tail at pos): lattice truss boom with a troughed belt of salt rising from a small feed hopper to a head drum and a discharge stream of salt, on a two-wheeled A-frame undercarriage with a drawbar, a drive motor in a hood at the head. Tail hopper and undercarriage collide, roof-flagged.',
+    params: { length: 'm (6.5)', head: 'belt height at the head m (3.4)' }, variants: 1, mount: 'ground',
+    build(B, o) {
+      const L = o.length ?? 6.5, hy = o.head ?? 3.4, ty = 0.95, a = Math.atan2(hy - ty, L), stl = '#8e979b', stlDk = '#6d7478';
+      const at = (t) => [t * L, ty + t * (hy - ty)];
+      // boom: two chords per side + lacing, belt on top
+      for (const sz of [-0.34, 0.34]) {
+        for (const dy of [-0.08, -0.5]) { const [xa, ya] = at(0), [xb, yb] = at(1); pbeam(B, 'metal', stl, [xa, ya + dy, sz], [xb, yb + dy, sz], 0.06, 0.06); }
+        for (let k = 0; k < 8; k++) { const [xa, ya] = at(k / 8), [xb, yb] = at((k + 1) / 8); pbeam(B, NS('metal'), stlDk, [xa, ya - 0.08, sz], [xb, yb - 0.5, sz], 0.03, 0.03); }
+      }
+      B.push(L / 2, (ty + hy) / 2, 0, 0, 0, a);
+      const BL = Math.hypot(L, hy - ty);
+      pbox(B, 'rubber', '#2d2f33', BL, 0.03, 0.5, 0, 0.02, 0);
+      B.add('rubber', moundGeo(BL - 0.3, 0.36, 0.08, 5), 'white', 0, 0.02, 0, {});
+      for (let k = 0; k < 7; k++) pbox(B, NS('metal'), K.galvDk, 0.05, 0.05, 0.72, -BL / 2 + 0.3 + k * ((BL - 0.6) / 6), -0.06, 0);
+      B.pop();
+      // head drum + motor hood + the salt stream falling onto the cone
+      const [hx] = at(1);
+      B.cyl('metal', K.iron, 0.22, 0.72, hx, hy, 0, { rx: HP, seg: 12 });
+      B.box('paint', '#6f8583', 0.6, 0.45, 0.4, hx - 0.4, hy + 0.1, 0.55, { r: 0.03 });
+      B.tube(NS('rubber'), K.salt, [P3(hx + 0.15, hy - 0.1, 0), P3(hx + 0.35, hy - 0.8, 0), P3(hx + 0.4, hy - 1.6, 0)], 0.1, { radial: 6 });
+      // A-frame on wheels under the middle, drawbar at the tail
+      const mx = L * 0.55, [, my] = at(0.55);
+      for (const sz of [-0.6, 0.6]) {
+        pbeam(B, 'metal', stl, [mx - 0.7, 0.35, sz], [mx, my - 0.5, sz * 0.5], 0.08, 0.08);
+        pbeam(B, 'metal', stl, [mx + 0.7, 0.35, sz], [mx, my - 0.5, sz * 0.5], 0.08, 0.08);
+        B.cyl('rubber', '#2d2e31', 0.32, 0.18, mx, 0.32, sz * 1.1, { rx: HP, seg: 14 });
+        B.cyl(NS('metal'), K.galvDk, 0.16, 0.2, mx, 0.32, sz * 1.1, { rx: HP, seg: 10 });
+      }
+      pbeam(B, 'metal', stlDk, [mx, 0.32, -0.66], [mx, 0.32, 0.66], 0.06, 0.06);
+      pbeam(B, NS('metal'), stlDk, [-0.2, 0.3, 0], [mx - 0.7, 0.35, 0], 0.07, 0.07);
+      // feed hopper at the tail
+      for (const [w, d, x, z, rx, rz] of [[1.3, 0.05, 0.1, -0.5, -0.4, 0], [1.3, 0.05, 0.1, 0.5, 0.4, 0], [0.05, 1.0, -0.55, 0, 0, 0.4], [0.05, 1.0, 0.75, 0, 0, -0.4]]) pbox(B, 'metal', '#7f878b', w, 0.7, d, x, ty + 0.35, z, { rx, rz });
+      for (const sx of [-0.4, 0.6]) for (const sz of [-0.35, 0.35]) B.box('metal', stlDk, 0.08, ty, 0.08, sx, ty / 2, sz, { r: 0.01 });
+      B.col(-0.6, 0, -0.55, 0.8, ty + 0.7, 0.55, { roof: true });
+      B.col(mx - 0.8, 0, -0.75, mx + 0.8, 1.0, 0.75, { roof: true });
+      B.blob(2.2, 1.6, mx, 0); B.blob(1.6, 1.4, 0.1, 0);
+    },
+  };
 }
 
 // ================================================================================================ placements
 // Alpha half (−Z); every entry is mirrored (x,z) → (−x,−z), rotY + π unless `mirror: false`. Site-specific structure
-// dressing (store, gallery, office, shed, heap, gantry) is authored in stage coordinates and placed at the origin.
+// dressing (store, gallery, office, shed, heap, gantry, pump house, loading platform) is authored in stage coordinates
+// and placed at the origin. The base (store, gallery, yard, office quay, creek) keeps its original numbers in BASE and
+// is moved out by the stretch (layout.js STRETCH, back()); the slice between is SLICE, in place.
 const H2 = P / 2;
-export const PLACEMENTS = [
+const DZ = STRETCH.d;
+const back = (p) => ({ ...p, pos: [p.pos[0], p.pos[1], p.pos[2] - DZ] });
+const MID = [
   // ---- structures
-  { type: 'saltpan_store', pos: [0, 0, 0] },
-  { type: 'saltpan_gallery', pos: [0, 0, 0] },
-  { type: 'saltpan_office', pos: [0, 0, 0] },
   { type: 'saltpan_shed', pos: [0, 0, 0], notIn: 'zones' },
   { type: 'saltpan_shed', pos: [0, 0, 0], zones: true, onlyIn: 'zones' },
   { type: 'saltpan_heap', pos: [0, 0, 0] },
-  { type: 'saltpan_gantry', pos: [0, 0, 0] },
-  { type: 'saltpan_windpump', pos: [0, 0.08, 0], rotY: 0.62, mirror: false },
-  { type: 'saltpan_launder', pos: [0.75, 0.08, -0.32], length: 2.7, height: 0.85 },
-  { type: 'saltpan_staging', pos: [0, 0.08, 0], mirror: false },
+  { type: 'saltpan_gantry', pos: [0, 0, 0], notIn: 'tower' },
+  { type: 'saltpan_windpump', pos: [0, 0.08, 0], rotY: 0.62, mirror: false, notIn: 'tower' },
+  { type: 'saltpan_launder', pos: [0.75, 0.08, -0.32], length: 2.7, height: 0.85, notIn: 'tower' },
+  { type: 'saltpan_staging', pos: [0, 0.08, 0], mirror: false, notIn: 'tower' },
   { type: 'saltpan_hut', pos: [24.6, 0, -5.0], rotY: -H2 },
 
-  // ---- narrow-gauge railway: yard line, shed-dock spur, sluice-dyke track, heap-face spur, mid siding
-  { type: 'saltpan_rail', pos: [-17.2, 0, -31.3], length: 34.7 },
-  { type: 'saltpan_buffer', pos: [-17.3, 0, -31.3], rotY: P },
-  { type: 'saltpan_buffer', pos: [17.55, 0, -31.3], rotY: 0 },
-  { type: 'saltpan_rail', pos: [-13.5, 0, -30.9], path: [[0, 0], [0, 12.4], [-0.5, 14.8], [-2.2, 16.1], [-4.4, 16.3], [-8.3, 16.3]], notIn: 'zones' },
+  // ---- narrow-gauge railway: the shed-dock spur (from the yard line, now 24 m further out: across the slice past the
+  //      pump house), sluice-dyke track, heap-face spur, mid siding
+  { type: 'saltpan_rail', pos: [-13.5, 0, -30.9 - DZ], path: [[0, 0], [0, 12.4 + DZ], [-0.5, 14.8 + DZ], [-2.2, 16.1 + DZ], [-4.4, 16.3 + DZ], [-8.3, 16.3 + DZ]], notIn: 'zones' },
   { type: 'saltpan_buffer', pos: [-21.9, 0, -14.6], rotY: P, notIn: 'zones' },
   // Zone Control: the dock spur stops at the turntable, leaving the dock front open for the east dock steps (layout.js)
-  { type: 'saltpan_rail', pos: [-13.5, 0, -30.9], path: [[0, 0], [0, 14.5]], onlyIn: 'zones' },
+  { type: 'saltpan_rail', pos: [-13.5, 0, -30.9 - DZ], path: [[0, 0], [0, 14.5 + DZ]], onlyIn: 'zones' },
   { type: 'saltpan_buffer', pos: [-13.5, 0, -16.35], rotY: -H2, onlyIn: 'zones' },
   { type: 'saltpan_turntable', pos: [-13.5, 0, -17.7] },
   { type: 'saltpan_rail', pos: [-12.7, 0, -17.7], length: 23.0 },
@@ -1671,17 +1967,13 @@ export const PLACEMENTS = [
   { type: 'saltpan_buffer', pos: [24.45, 0, -4.4], rotY: 0 },
 
   // ---- tipper wagons (cover)
-  { type: 'saltpan_wagon', pos: [-10.4, 0, -31.3], variant: 0 },
-  { type: 'saltpan_wagon', pos: [-8.5, 0, -31.3], variant: 0 },
-  { type: 'saltpan_wagon', pos: [6.9, 0, -31.3], variant: 1 },
-  { type: 'saltpan_wagon', pos: [16.4, 0, -31.3], variant: 1 },
   { type: 'saltpan_wagon', pos: [-16.9, 0, -14.6], variant: 0, notIn: 'zones' },
   { type: 'saltpan_wagon', pos: [-18.8, 0, -14.6], variant: 1, notIn: 'zones' },
-  { type: 'saltpan_wagon', pos: [-5.8, 0, -17.7], variant: 0 },
+  { type: 'saltpan_wagon', pos: [-5.8, 0, -17.7], variant: 0, notIn: 'tower' },
   { type: 'saltpan_wagon', pos: [4.6, 0, -17.7], variant: 1 },
-  { type: 'saltpan_wagon', pos: [16.6, 0, -8.7], variant: 0 },
-  { type: 'saltpan_wagon', pos: [18.5, 0, -8.7], variant: 1 },
-  { type: 'saltpan_wagon', pos: [19.4, 0, -4.4], variant: 0 },
+  { type: 'saltpan_wagon', pos: [16.6, 0, -8.7], variant: 0, notIn: 'tower' },
+  { type: 'saltpan_wagon', pos: [18.5, 0, -8.7], variant: 1, notIn: 'tower' },
+  { type: 'saltpan_wagon', pos: [19.4, 0, -4.4], variant: 0, notIn: 'tower' },
   { type: 'saltpan_rail', pos: [-12.6, -1.2, -2.3], length: 6.2 },
   { type: 'saltpan_buffer', pos: [-6.2, -1.2, -2.3], rotY: 0 },
   { type: 'saltpan_wagon', pos: [-9.6, -1.2, -2.3], variant: 0, color: '#9a5d42' },
@@ -1700,9 +1992,9 @@ export const PLACEMENTS = [
   { type: 'saltpan_saltrow', pos: [-24.4, 0, -9.3], variant: 1, count: 2, height: 0.5 },
 
   // ---- sluices (culvert mouths on the pan walls)
-  { type: 'saltpan_sluice', pos: [-8.2, 0, -19.0], walls: [[-1.0, 0.6], [2.0, 0.9]], open: 0.5 },
+  { type: 'saltpan_sluice', pos: [-8.2, 0, -19.0], walls: [[-1.0, 0.6], [2.0, 0.9]], open: 0.5, notIn: 'tower' },
   { type: 'saltpan_sluice', pos: [8.0, 0, -19.0], walls: [[-1.0, 0.6], [2.0, 0.9]], open: 0.25 },
-  { type: 'saltpan_sluice', pos: [7.2, 0, -9.0], walls: [[-1.0, 0.9], [1.0, 1.2]], open: 0.6 },
+  { type: 'saltpan_sluice', pos: [7.2, 0, -9.0], walls: [[-1.0, 0.9], [1.0, 1.2]], open: 0.6, notIn: 'tower' },
 
   // ---- pan walls: timber revetment posts
   { type: 'saltpan_revet', pos: [-12, 0, -30], rotY: 0, length: 21, depth: 0.6 },
@@ -1717,10 +2009,10 @@ export const PLACEMENTS = [
   { type: 'saltpan_revet', pos: [13, 0, -8], rotY: -H2, length: 16, depth: 1.2 },
 
   // ---- boardwalk structures
-  { type: 'saltpan_bwposts', pos: [-2.7, 0.08, -30.0], rotY: -H2, length: 10, width: 1.8, drop: 0.68, rail: 1, lamps: true },
-  { type: 'saltpan_bwposts', pos: [3.63, 0.08, -17.0], rotY: -2.234, length: 8.9, width: 1.8, drop: 0.98, rail: -1 },
-  { type: 'saltpan_bwposts', pos: [2.3, 0.08, -8.0], rotY: -H2, length: 4.4, width: 1.8, drop: 1.28 },
-  { type: 'saltpan_bwposts', pos: [3.6, 0.08, -1.7], rotY: 0, length: 9.4, width: 1.8, drop: 1.28, rail: -1, lamps: true },
+  { type: 'saltpan_bwposts', pos: [-2.7, 0.08, -30.0], rotY: -H2, length: 10, width: 1.8, drop: 0.68, rail: 1, lamps: true, notIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [3.63, 0.08, -17.0], rotY: -2.234, length: 8.9, width: 1.8, drop: 0.98, rail: -1, notIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [2.3, 0.08, -8.0], rotY: -H2, length: 4.4, width: 1.8, drop: 1.28, notIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [3.6, 0.08, -1.7], rotY: 0, length: 9.4, width: 1.8, drop: 1.28, rail: -1, lamps: true, notIn: 'tower' },
 
   // ---- loading dock + yard clutter
   { type: 'saltpan_sacks', pos: [-24.4, 1.1, -16.3], variant: 0, rows: 4, notIn: 'zones' },
@@ -1734,12 +2026,6 @@ export const PLACEMENTS = [
   { type: 'saltpan_sacks', pos: [-18.9, 1.1, -17.35], variant: 2, count: 3, rotY: 0.1, notIn: 'zones' },
   // Zone Control: the facade stair takes the dock's back half (layout.js) — the jib crane moves to the west end
   { type: 'saltpan_crane', pos: [-25.55, 1.1, -15.85], rotY: 0, onlyIn: 'zones' },
-  { type: 'saltpan_sacks', pos: [-10.6, 0, -37.6], variant: 0, rows: 3 },
-  { type: 'saltpan_sacks', pos: [-7.9, 2.4, -42.4], variant: 0, rows: 2, rotY: 0.1 },
-  { type: 'saltpan_sacks', pos: [3.9, 2.4, -40.4], variant: 2, count: 2, rotY: -H2 },
-  { type: 'saltpan_barrow', pos: [3.8, 2.4, -42.6], rotY: 2.8, variant: 1 },
-  { type: 'saltpan_sacks', pos: [-12.3, 0, -37.2], variant: 1, rotY: 0.6 },
-  { type: 'saltpan_sacks', pos: [3.8, 0, -35.3], variant: 1, rotY: -0.4 },
   { type: 'saltpan_sacks', pos: [-14.6, 0, -27.6], variant: 0, rows: 3, rotY: 0.2 },
   { type: 'saltpan_sacks', pos: [19.6, 0, -1.8], variant: 0, rows: 2, rotY: 0.3 },
   { type: 'saltpan_sacks', pos: [-16.3, 0, -12.4], variant: 0, rows: 2, rotY: -0.2, notIn: 'zones' },
@@ -1749,39 +2035,29 @@ export const PLACEMENTS = [
   { type: 'saltpan_barrow', pos: [-6.2, -0.6, -26.8], rotY: 0.4, variant: 0 },
   { type: 'saltpan_barrow', pos: [-10.3, -0.9, -15.2], rotY: -0.9, variant: 1 },
   { type: 'saltpan_barrow', pos: [-3.8, -1.2, -6.1], rotY: 2.6, variant: 0 },
-  { type: 'saltpan_barrow', pos: [2.9, 0, -35.2], rotY: -0.2, variant: 1 },
-  { type: 'saltpan_barrow', pos: [-14.4, 0, -10.8], rotY: 1.9, variant: 0 },
-  { type: 'saltpan_tools', pos: [-1.5, 0, -19.3], rotY: 0.05, variant: 2 },
-  { type: 'saltpan_tools', pos: [-17.8, 0, -39.4], rotY: 0, variant: 1 },
+  { type: 'saltpan_barrow', pos: [-14.4, 0, -10.8], rotY: 1.9, variant: 0, notIn: 'tower' },
+  { type: 'saltpan_tools', pos: [-1.5, 0, -19.3], rotY: 0.05, variant: 2, notIn: 'tower' },
   { type: 'saltpan_tools', pos: [8.6, -0.6, -25.9], rotY: -0.3, variant: 0 },
   { type: 'saltpan_tools', pos: [-11.3, -1.2, -3.2], rotY: 1.2, variant: 2 },
 
   // ---- lighting
-  { type: 'saltpan_lamp', pos: [-13.0, 0, -36.2], rotY: 0.2 },
-  { type: 'saltpan_lamp', pos: [11.8, 0, -35.2], rotY: -0.3 },
   { type: 'saltpan_lamp', pos: [-12.6, 0, -24.8], rotY: -H2 + 0.3 },
-  { type: 'saltpan_lamp', pos: [11.5, 0, -8.6], rotY: P - 0.4 },
-  { type: 'saltpan_lamp', pos: [-12.5, 0, -8.6], rotY: 0.5 },
+  { type: 'saltpan_lamp', pos: [11.5, 0, -8.6], rotY: P - 0.4, notIn: 'tower' },
+  { type: 'saltpan_lamp', pos: [-12.5, 0, -8.6], rotY: 0.5, notIn: 'tower' },
   { type: 'saltpan_lamp', pos: [25.2, 0, -7.0], rotY: -H2 },
 
   // ---- signs (pan boards are per side)
   { type: 'saltpan_sign', pos: [10.2, 0, -30.35], rotY: P, text: 'PAN 2', mirror: false },
   { type: 'saltpan_sign', pos: [-10.2, 0, 30.35], rotY: 0, text: 'PAN 7', mirror: false },
-  { type: 'saltpan_sign', pos: [-11.2, 0, -17.35], rotY: P, text: 'PAN 3', h: 0.26, mirror: false },
-  { type: 'saltpan_sign', pos: [11.2, 0, 17.35], rotY: 0, text: 'PAN 6', h: 0.26, mirror: false },
-  { type: 'saltpan_sign', pos: [-12.4, 0, -8.8], rotY: P + 0.4, text: 'GREAT PAN', h: 0.24, mirror: false },
-  { type: 'saltpan_sign', pos: [12.4, 0, 8.8], rotY: 0.4, text: 'GREAT PAN', h: 0.24, mirror: false },
+  { type: 'saltpan_sign', pos: [-11.2, 0, -17.35], rotY: P, text: 'PAN 3', h: 0.26, mirror: false, notIn: 'tower' },
+  { type: 'saltpan_sign', pos: [11.2, 0, 17.35], rotY: 0, text: 'PAN 6', h: 0.26, mirror: false, notIn: 'tower' },
+  { type: 'saltpan_sign', pos: [-12.4, 0, -8.8], rotY: P + 0.4, text: 'GREAT PAN', h: 0.24, mirror: false, notIn: 'tower' },
+  { type: 'saltpan_sign', pos: [12.4, 0, 8.8], rotY: 0.4, text: 'GREAT PAN', h: 0.24, mirror: false, notIn: 'tower' },
   { type: 'saltpan_sign', pos: [-12.3, 0, -19.9], rotY: P, variant: 2, text: 'SOFT BRINE' },
   { type: 'saltpan_sign', pos: [12.4, 0, -29.6], rotY: P, variant: 2, text: 'NO BARROWS', board: '#ffffff', color: '#b8493d' },
 
-  // ---- the diagonal causeway over the creek (railed both sides) + the timber quay edges along the whole outline
-  { type: 'saltpan_bwposts', pos: [-20.2, 0.08, -38.4], rotY: -2.071, length: 14.6, width: 1.8, drop: 2.7, rail: 2 },
-  { type: 'saltpan_seaedge', pos: [-12, 0, -46], rotY: P, length: 14 },
-  { type: 'saltpan_seaedge', pos: [14, 0, -46], rotY: P, length: 6 },
-  { type: 'saltpan_seaedge', pos: [14, 0, -41], rotY: H2, length: 5 },
-  { type: 'saltpan_seaedge', pos: [23.5, 0, -41], rotY: P, length: 9.5, post: true },
-  { type: 'saltpan_seaedge', pos: [26, 0, -38.5], rotY: 3 * P / 4, length: 3.54 },
-  { type: 'saltpan_seaedge', pos: [26, 0, -24], rotY: H2, length: 14.5, post: true },
+  // ---- the timber quay edges along the mid-side outline
+  { type: 'saltpan_seaedge', pos: [26, 0, -24], rotY: H2, length: 21, post: true },
   { type: 'saltpan_seaedge', pos: [24.2, 0, -24], rotY: 0, length: 1.8 },
   { type: 'saltpan_seaedge', pos: [24.2, 0, -14], rotY: H2, length: 10 },
   { type: 'saltpan_seaedge', pos: [26, 0, -12.2], rotY: 3 * P / 4, length: 2.55 },
@@ -1796,17 +2072,12 @@ export const PLACEMENTS = [
   { type: 'saltpan_seaedge', pos: [-26, 0, -11], rotY: -H2, length: 3 },
   { type: 'saltpan_seaedge', pos: [-30, 0, -15], rotY: -P / 4, length: 5.66 },
   { type: 'saltpan_seaedge', pos: [-30, 0, -26], rotY: -H2, length: 11, post: true },
-  { type: 'saltpan_seaedge', pos: [-18, 0, -26], rotY: P, length: 12 },
-  { type: 'saltpan_seaedge', pos: [-18, 0, -38], rotY: -H2, length: 12 },
-  { type: 'saltpan_seaedge', pos: [-26, 0, -38], rotY: 0, length: 8, post: true },
-  { type: 'saltpan_seaedge', pos: [-26, 0, -46], rotY: -H2, length: 8 },
 
-  // ---- the shed quay's far side (the new path round the shed): a quay crane over the water, sacks, a barrow
+  // ---- the shed quay's far side (the path round the shed): a quay crane over the water, sacks, a barrow
   { type: 'saltpan_crane', pos: [-28.6, 0, -23.2], rotY: -H2 },
   { type: 'saltpan_sacks', pos: [-28.3, 0, -17.8], variant: 0, rows: 2, rotY: H2 },
   { type: 'saltpan_sacks', pos: [-27.6, 0, -20.4], variant: 1, rotY: 0.7 },
   { type: 'saltpan_barrow', pos: [-28.4, 0, -14.4], rotY: 2.2, variant: 0 },
-  { type: 'saltpan_samphire', pos: [-20.6, 0, -37.6], rotY: 0, length: 2.2 },
   { type: 'saltpan_samphire', pos: [25.2, 0, -12.6], rotY: -H2, variant: 1 },
   { type: 'saltpan_gull', pos: [29.0, 0.68, -5.0], rotY: 1.3 },
 
@@ -1814,8 +2085,6 @@ export const PLACEMENTS = [
   { type: 'saltpan_samphire', pos: [25.0, 0, -29.4], rotY: -H2, length: 3.2 },
   { type: 'saltpan_samphire', pos: [25.1, 0, -9.6], rotY: -H2, length: 3.5 },
   { type: 'saltpan_samphire', pos: [24.8, 0, -37.6], rotY: -H2, length: 5 },
-  { type: 'saltpan_samphire', pos: [9.2, 0, -45.0], rotY: 0, length: 2.4 },
-  { type: 'saltpan_samphire', pos: [-25.75, 0, -45.3], rotY: -H2, length: 4 },
   { type: 'saltpan_samphire', pos: [-29.3, 0, -25.4], rotY: -H2, length: 4 },
   { type: 'saltpan_samphire', pos: [-25.3, 0, -12.2], rotY: -H2, length: 3.4 },
   { type: 'saltpan_samphire', pos: [12.2, 0, -29.5], rotY: -H2, length: 2.4 },
@@ -1832,27 +2101,222 @@ export const PLACEMENTS = [
   { type: 'saltpan_gauge', pos: [12.6, -1.2, -7.6], rotY: -H2 },
   { type: 'saltpan_stakes', pos: [-11.7, 0, -30.4], rotY: 0, length: 4 },
   { type: 'saltpan_stakes', pos: [11.3, 0, -16.8], rotY: -H2, length: 6 },
-  { type: 'saltpan_sleepers', pos: [-15.2, 0, -34.2], rotY: 0.2 },
   { type: 'saltpan_sleepers', pos: [20.8, 0, 1.4], rotY: 1.2, rows: 3 },
-  { type: 'barrel', pos: [-19.4, 0, -39.3], variant: 1, color: '#5d7082', color2: '#b8493d' },
-  { type: 'barrel', pos: [-18.8, 0, -39.0], variant: 0, color: '#8d6e4f' },
-  { type: 'barrel', pos: [13.2, 0, -38.8], variant: 1, color: '#6f848b', color2: '#e8e0cf' },
 
   // ---- gulls on the works' perches, a warning plate at the heap
-  { type: 'saltpan_gull', pos: [-2.0, 8.93, -44.3], rotY: 1.2 },
-  { type: 'saltpan_gull', pos: [-7.9, 1.73, -19.0], rotY: 2.6, variant: 1 },
-  { type: 'saltpan_gull', pos: [-24.42, 0.95, -31.62], rotY: -0.4 },
-  { type: 'saltpan_gull', pos: [0.3, 9.15, -0.3], rotY: 0.9, mirror: false },
+  { type: 'saltpan_gull', pos: [-7.9, 1.73, -19.0], rotY: 2.6, variant: 1, notIn: 'tower' },
+  { type: 'saltpan_gull', pos: [0.3, 9.15, -0.3], rotY: 0.9, mirror: false, notIn: 'tower' },
   { type: 'saltpan_gull', pos: [21.75, 5.62, -11.9], rotY: -2.2, variant: 1 },
   { type: 'saltpan_gull', pos: [11.3, 1.02, -12.8], rotY: 1.9 },
   { type: 'saltpan_sign', pos: [11.2, 0, -25.4], rotY: -H2 + 0.3, variant: 2, text: 'KEEP OFF THE HEAP', board: '#ffffff', color: '#b8493d' },
   { type: 'saltpan_sign', pos: [-14.4, 0, -25.6], rotY: P, variant: 2, text: 'LOFT', board: '#f1c95c' },
 
-  // ---- out on the tidal flat: evaporation ponds, a distant wind pump and camelle
+  // ---- out on the tidal flat: evaporation ponds, a distant wind pump and camelle (either side of the stage)
   { type: 'saltpan_ponds', pos: [38, 0, 0], rotY: H2, w: 82, d: 60, seed: 11, pump: [38, 24] },
   { type: 'saltpan_ponds', pos: [38, 0, 82], rotY: H2, w: 82, d: 60, seed: 23, camelle: [32, 38, 26] },
-  { type: 'saltpan_ponds', pos: [64, 0, -64], rotY: P, w: 128, d: 58, seed: 31, pump: [80, 20], camelle: [30, 34, 40] },
   { type: 'saltpan_flamingos', pos: [45, -1.33, -14], count: 8, radius: 4 },
   { type: 'saltpan_flamingos', pos: [52, -1.33, 22], count: 5, radius: 3 },
+];
+
+// ---- the base, moved out by the stretch (original numbers; back() adds -DZ to z)
+const BASE = [
+  { type: 'saltpan_store', pos: [0, 0, 0] },
+  { type: 'saltpan_gallery', pos: [0, 0, 0] },
+  { type: 'saltpan_office', pos: [0, 0, 0] },
+  // the yard line along the front of the store, its wagons
+  { type: 'saltpan_rail', pos: [-17.2, 0, -31.3], length: 34.7 },
+  { type: 'saltpan_buffer', pos: [-17.3, 0, -31.3], rotY: P },
+  { type: 'saltpan_buffer', pos: [17.55, 0, -31.3], rotY: 0 },
+  { type: 'saltpan_wagon', pos: [-10.4, 0, -31.3], variant: 0 },
+  { type: 'saltpan_wagon', pos: [-8.5, 0, -31.3], variant: 0 },
+  { type: 'saltpan_wagon', pos: [6.9, 0, -31.3], variant: 1 },
+  { type: 'saltpan_wagon', pos: [16.4, 0, -31.3], variant: 1 },
+  // yard + gallery clutter
+  { type: 'saltpan_sacks', pos: [-10.6, 0, -37.6], variant: 0, rows: 3 },
+  { type: 'saltpan_sacks', pos: [-7.9, 2.4, -42.4], variant: 0, rows: 2, rotY: 0.1 },
+  { type: 'saltpan_sacks', pos: [3.9, 2.4, -40.4], variant: 2, count: 2, rotY: -H2 },
+  { type: 'saltpan_barrow', pos: [3.8, 2.4, -42.6], rotY: 2.8, variant: 1 },
+  { type: 'saltpan_sacks', pos: [-12.3, 0, -37.2], variant: 1, rotY: 0.6 },
+  { type: 'saltpan_sacks', pos: [3.8, 0, -35.3], variant: 1, rotY: -0.4 },
+  { type: 'saltpan_barrow', pos: [2.9, 0, -35.2], rotY: -0.2, variant: 1 },
+  { type: 'saltpan_tools', pos: [-17.8, 0, -39.4], rotY: 0, variant: 1 },
+  { type: 'saltpan_lamp', pos: [-13.0, 0, -36.2], rotY: 0.2 },
+  { type: 'saltpan_lamp', pos: [11.8, 0, -35.2], rotY: -0.3 },
+  { type: 'saltpan_sleepers', pos: [-15.2, 0, -34.2], rotY: 0.2 },
+  { type: 'barrel', pos: [-19.4, 0, -39.3], variant: 1, color: '#5d7082', color2: '#b8493d' },
+  { type: 'barrel', pos: [-18.8, 0, -39.0], variant: 0, color: '#8d6e4f' },
+  { type: 'barrel', pos: [13.2, 0, -38.8], variant: 1, color: '#6f848b', color2: '#e8e0cf' },
+  { type: 'saltpan_gull', pos: [-2.0, 8.93, -44.3], rotY: 1.2 },
+  // the diagonal causeway over the creek (railed both sides), a gull on its post
+  { type: 'saltpan_bwposts', pos: [-20.2, 0.08, -38.4], rotY: -2.071, length: 14.6, width: 1.8, drop: 2.7, rail: 2 },
+  { type: 'saltpan_gull', pos: [-24.42, 0.95, -31.62], rotY: -0.4 },
+  // the quay edges round the yard, the office quay and the creek (the creek's north bank, z -26 here, is the intake
+  // quay's south edge once moved)
+  { type: 'saltpan_seaedge', pos: [-12, 0, -46], rotY: P, length: 14 },
+  { type: 'saltpan_seaedge', pos: [14, 0, -46], rotY: P, length: 6 },
+  { type: 'saltpan_seaedge', pos: [14, 0, -41], rotY: H2, length: 5 },
+  { type: 'saltpan_seaedge', pos: [-18, 0, -26], rotY: P, length: 12 },
+  { type: 'saltpan_seaedge', pos: [-18, 0, -38], rotY: -H2, length: 12 },
+  { type: 'saltpan_seaedge', pos: [-26, 0, -38], rotY: 0, length: 8, post: true },
+  { type: 'saltpan_seaedge', pos: [-26, 0, -46], rotY: -H2, length: 8 },
+  { type: 'saltpan_samphire', pos: [-20.6, 0, -37.6], rotY: 0, length: 2.2 },
+  { type: 'saltpan_samphire', pos: [9.2, 0, -45.0], rotY: 0, length: 2.4 },
+  { type: 'saltpan_samphire', pos: [-25.75, 0, -45.3], rotY: -H2, length: 4 },
+  // the pond field behind the store, flamingos in it
+  { type: 'saltpan_ponds', pos: [64, 0, -64], rotY: P, w: 128, d: 58, seed: 31, pump: [80, 20], camelle: [30, 34, 40] },
   { type: 'saltpan_flamingos', pos: [-12, -1.33, -74], count: 6, radius: 3.5 },
+];
+
+// ---- the slice (Long Stages, 2026-09-30): the evaporation terraces and the brine pump house (layout.js SLICE)
+// (Tower Command's track switchbacks up the terraces — lanes z -35.5 / -40.5 / -45.5 / -51 and the turns at x 10.5,
+// -8.5 and -2.7 — so nothing that stands on them is built in that mode: `notIn: 'tower'`)
+const SLICE = [
+  // ---- the pump house, its loading platform, the header tank, the hand crane over the spur
+  { type: 'saltpan_pumphouse', pos: [0, 0, 0] },
+  { type: 'saltpan_stage', pos: [0, 0, 0] },
+  { type: 'saltpan_tank', pos: [-11.2, 1.5, -42.3] },
+  { type: 'saltpan_crane', pos: [-12.0, 1.5, -37.7], rotY: -H2 },
+  { type: 'saltpan_sacks', pos: [-5.4, 1.5, -43.0], variant: 0, rows: 4, rotY: 0.08 },
+  { type: 'saltpan_scale', pos: [-6.6, 1.5, -37.65], rotY: 0 },
+  { type: 'saltpan_barrow', pos: [-11.0, 1.5, -39.4], rotY: 1.3, variant: 0 },
+  { type: 'saltpan_gull', pos: [-13.6, 4.66, -42.3], rotY: 0.4 },
+  // wagons on the spur, loading at the platform; an empty one further back
+  { type: 'saltpan_wagon', pos: [-13.5, 0, -38.3], rotY: -H2, variant: 0 },
+  { type: 'saltpan_wagon', pos: [-13.5, 0, -40.3], rotY: -H2, variant: 0, color: '#6d7a63' },
+  { type: 'saltpan_wagon', pos: [-13.5, 0, -48.2], rotY: -H2, variant: 1 },
+
+  // ---- the intake quay (west): the bay's timber edges, salt cones on the north part, drums, a lamp
+  { type: 'saltpan_seaedge', pos: [-30, 0, -37], rotY: -H2, length: 11, post: true },
+  { type: 'saltpan_seaedge', pos: [-26, 0, -37], rotY: P, length: 4 },
+  { type: 'saltpan_seaedge', pos: [-26, 0, -43], rotY: -H2, length: 6 },
+  { type: 'saltpan_seaedge', pos: [-30, 0, -43], rotY: 0, length: 4 },
+  { type: 'saltpan_seaedge', pos: [-30, 0, -50], rotY: -H2, length: 7 },
+  { type: 'saltpan_cone', pos: [-25.6, 0, -30.8], variant: 0, r: 2.3, h: 2.5 },
+  { type: 'saltpan_cone', pos: [-21.6, 0, -34.2], variant: 1, r: 2.2, h: 2.3 },
+  { type: 'saltpan_sacks', pos: [-28.4, 0, -35.4], variant: 1, rotY: 0.5 },
+  { type: 'barrel', pos: [-17.5, 0, -46.2], variant: 1, color: '#5d7082', color2: '#b8493d' },
+  { type: 'barrel', pos: [-17.2, 0, -45.6], variant: 0, color: '#8d6e4f' },
+  { type: 'saltpan_tools', pos: [-25.0, 0, -45.6], rotY: 0.1, variant: 1 },
+  { type: 'saltpan_lamp', pos: [-24.6, 0, -48.4], rotY: 0.7 },
+  { type: 'saltpan_lamp', pos: [-15.9, 0, -35.6], rotY: H2 },
+  { type: 'saltpan_samphire', pos: [-29.4, 0, -33.4], rotY: -H2, length: 3 },
+  { type: 'saltpan_samphire', pos: [-27.6, 0, -49.5], rotY: P, length: 2.4 },
+  { type: 'saltpan_samphire', pos: [-26.6, 0, -42.5], rotY: -H2, length: 2 },
+  { type: 'saltpan_gull', pos: [-26.45, 2.82, -41.2], rotY: 2.0, variant: 1 },
+
+  // ---- the pump dyke along the back pan: brine launders feeding the pans (a gap for the plank ramp), a lamp
+  { type: 'saltpan_launder', pos: [0.4, 0, -31.3], length: 5.6, height: 1.0 },
+  { type: 'saltpan_launder', pos: [9.0, 0, -31.3], length: 3.6, height: 1.0 },
+  { type: 'saltpan_lamp', pos: [12.4, 0, -32.2], rotY: P + 0.4 },
+  { type: 'saltpan_sacks', pos: [-15.2, 0, -31.6], variant: 0, rows: 4, rotY: -0.1 },
+
+  // ---- the evaporation terraces: revetments on every riser, sluices between the ponds, pond boards, salt
+  { type: 'saltpan_revet', pos: [13, 0, -33], rotY: P, length: 13, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0, -33], rotY: H2, length: 5, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [13, 0, -38], rotY: -H2, length: 5, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0, -38], rotY: 0, length: 13, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0.3, -43], rotY: 0, length: 13, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0.3, -48], rotY: -H2, length: 5, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [13, 0.3, -43], rotY: H2, length: 5, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0.6, -48], rotY: 0, length: 13, depth: 0.3 },
+  { type: 'saltpan_revet', pos: [0, 0.6, -54], rotY: -H2, length: 6, depth: 0.6 },
+  { type: 'saltpan_revet', pos: [13, 0.6, -48], rotY: H2, length: 6, depth: 0.6 },
+  { type: 'saltpan_revet', pos: [13, 0.6, -54], rotY: P, length: 13, depth: 0.6 },
+  { type: 'saltpan_sluice', pos: [4.5, 0, -38.2], walls: [[0.2, 0.3]], open: 0.5 },
+  { type: 'saltpan_sluice', pos: [8.0, 0.3, -43.2], walls: [[0.2, 0.3]], open: 0.3 },
+  { type: 'saltpan_sluice', pos: [3.5, 0.6, -48.2], walls: [[0.2, 0.3]], open: 0.6 },
+  { type: 'saltpan_sign', pos: [13.5, 0, -35.5], rotY: -H2, text: 'POND 1', h: 0.26 },
+  { type: 'saltpan_sign', pos: [13.5, 0, -40.7], rotY: -H2, text: 'POND 2', h: 0.26 },
+  { type: 'saltpan_sign', pos: [13.5, 0, -45.7], rotY: -H2, text: 'POND 3', h: 0.26 },
+  { type: 'saltpan_sign', pos: [13.5, 0, -51.0], rotY: -H2, text: 'POND 4', h: 0.26 },
+  { type: 'saltpan_gauge', pos: [12.4, -0.3, -37.2], rotY: -H2 },
+  { type: 'saltpan_gauge', pos: [0.8, 0.3, -47.4], rotY: H2 },
+  { type: 'saltpan_stakes', pos: [0.6, 0, -42.4], rotY: 0, length: 12 },
+  // raked salt on the ponds (cover), off the tower's lanes in that mode
+  { type: 'saltpan_saltrow', pos: [3.6, -0.3, -35.6], variant: 2, height: 1.2, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [10.4, -0.3, -35.4], variant: 0, length: 3.6, height: 1.1, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [11.0, 0, -40.9], variant: 2, height: 1.2, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [5.4, 0, -40.6], variant: 1, count: 3, height: 0.6, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [2.8, 0.3, -45.7], variant: 2, height: 1.2, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [9.4, 0.3, -45.6], variant: 0, length: 4, height: 1.1, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [6.6, 0.6, -51.2], variant: 2, height: 1.2, notIn: 'tower' },
+  { type: 'saltpan_saltrow', pos: [11.3, 0.6, -50.4], variant: 1, count: 2, height: 0.6, notIn: 'tower' },
+  { type: 'saltpan_tools', pos: [8.2, 0.6, -52.9], rotY: 0.1, variant: 0 },
+
+  // ---- the pump yard: the causeway down the middle, the apron behind the platform
+  { type: 'saltpan_sacks', pos: [-1.0, 0, -35.2], variant: 0, rows: 4, rotY: H2, notIn: 'tower' },
+  { type: 'saltpan_sacks', pos: [-1.6, 0, -48.2], variant: 0, rows: 4, rotY: 0.1 },
+  { type: 'saltpan_sacks', pos: [-6.3, 0, -49.6], variant: 0, rows: 4, rotY: -0.15 },
+  { type: 'saltpan_sacks', pos: [-7.4, 0, -51.4], variant: 1, rotY: 0.9 },
+  { type: 'saltpan_sleepers', pos: [-9.2, 0, -52.6], rotY: 0.3 },
+  { type: 'saltpan_barrow', pos: [-5.0, 0, -53.0], rotY: -0.5, variant: 1 },
+  { type: 'saltpan_lamp', pos: [-4.6, 0, -48.1], rotY: H2 - 0.3 },
+
+  // ---- the hopper yard (east): the tipping siding off the yard line up to the conveyor's tail hopper, its wagons (one
+  //      tipping into the hopper), the weigh house; the slipway notch; the cone yard with the stacker building a cone
+  { type: 'saltpan_rail', pos: [11.2, 0, -55.3], path: [[0, 0], [3.2, 0.25], [5.5, 1.6], [6.3, 3.6], [6.3, 20.5]] },
+  { type: 'saltpan_buffer', pos: [17.5, 0, -34.6], rotY: -H2 },
+  { type: 'saltpan_wagon', pos: [17.5, 0, -37.6], rotY: H2, variant: 2 },
+  { type: 'saltpan_wagon', pos: [17.5, 0, -43.2], rotY: H2, variant: 0 },
+  { type: 'saltpan_wagon', pos: [17.5, 0, -45.1], rotY: H2, variant: 0, color: '#b39655' },
+  { type: 'saltpan_hut', pos: [15.2, 0, -49.8], rotY: H2 },
+  { type: 'saltpan_sign', pos: [16.07, 1.6, -49.25], rotY: H2, variant: 1, text: 'WEIGH HOUSE', h: 0.12 },
+  { type: 'saltpan_lamp', pos: [14.3, 0, -46.6], rotY: -H2 },
+  { type: 'saltpan_sacks', pos: [24.0, 0, -33.8], variant: 1, rotY: 0.4 },
+  { type: 'saltpan_sacks', pos: [22.6, 0, -42.4], variant: 0, rows: 4, rotY: 0.2 },
+  { type: 'saltpan_barrow', pos: [15.4, 0, -31.9], rotY: 1.2, variant: 2 },
+  { type: 'saltpan_seaedge', pos: [26, 0, -45], rotY: P, length: 2 },
+  { type: 'saltpan_seaedge', pos: [24, 0, -45], rotY: H2, length: 5 },
+  { type: 'saltpan_seaedge', pos: [24, 0, -50], rotY: 0, length: 2, post: true },
+  { type: 'saltpan_seaedge', pos: [26, 0, -50], rotY: H2, length: 13, post: true },
+  { type: 'saltpan_seaedge', pos: [26, 0, -63], rotY: 3 * P / 4, length: 2.83 },
+  { type: 'saltpan_seaedge', pos: [24, 0, -65], rotY: P, length: 10 },
+  { type: 'saltpan_samphire', pos: [23.4, 0, -46.2], rotY: -H2, length: 2.6 },
+  { type: 'saltpan_samphire', pos: [25.2, 0, -52.0], rotY: -H2, length: 4 },
+  { type: 'saltpan_samphire', pos: [17.5, 0, -64.3], rotY: P, length: 3 },
+  { type: 'saltpan_cone', pos: [22.2, 0, -56.8], variant: 0, r: 2.4, h: 2.7 },
+  { type: 'saltpan_cone', pos: [21.0, 0, -62.0], variant: 1, r: 2.1, h: 2.3 },
+  { type: 'saltpan_stacker', pos: [15.2, 0, -61.5], rotY: 0, length: 5.2, head: 3.0 },
+  { type: 'saltpan_gull', pos: [22.2, 2.72, -56.8], rotY: -1.4 },
+];
+
+export const PLACEMENTS = [
+  ...MID,
+  ...BASE.map(back),
+  ...SLICE,
+
+  // ---- Tower Command only (the track: centre → +Z onto the ±X boardwalk → along the mid dyke → the front dyke → the
+  //      dock yard → the sluice dyke → down the back-pan boardwalk → switchbacking up the terraces over the loading
+  //      platform to the store yard; src/world/tower-data.js). The pieces it would stutter over move aside or go (their
+  //      originals above are notIn: 'tower'); the user's two blue X's — the front-dyke sluice (Bravo −7.2, 8.5) and the
+  //      tipper wagon at checkpoint 1 (Bravo −18.5, 8.7) — just go.
+  // the wind pump on a timber trestle over the staging: the tower starts underneath it (the ground launder goes)
+  { type: 'saltpan_trestle', pos: [0, 0.08, 0], mirror: false, onlyIn: 'tower' },
+  { type: 'saltpan_staging', pos: [0, 0.08, 0], mirror: false, track: true, onlyIn: 'tower' },
+  { type: 'saltpan_gull', pos: [0.3, 13.45, -0.3], rotY: 0.9, mirror: false, onlyIn: 'tower' },
+  // the conveyor gantry with its head bent 0.7 m further back and the head platform's mid edge 0.9 m back over it (the
+  // track turns at checkpoint 1 beside the head platform, not under it: the tower needs 3.72 m of headroom)
+  { type: 'saltpan_gantry', pos: [0, 0, 0], headBent: -10.5, headEdge: -10.4, onlyIn: 'tower' },
+  // the boardwalks the tower rides / crosses: no handrail on the ±X and back-pan boardwalks, the diagonal one's stops
+  // short of the front dyke; the ±X and mid decks sit flush with the dykes, the diagonal one 8 cm down (layout.js)
+  { type: 'saltpan_bwposts', pos: [-2.7, 0, -30.0], rotY: -H2, length: 10, width: 1.8, drop: 0.6, onlyIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [3.63, -0.08, -17.0], rotY: -2.234, length: 8.9, width: 1.8, drop: 0.82, rail: -1, railTo: 7.6, onlyIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [2.3, 0, -8.0], rotY: -H2, length: 4.4, width: 1.8, drop: 1.2, onlyIn: 'tower' },
+  { type: 'saltpan_bwposts', pos: [3.6, 0, -1.7], rotY: 0, length: 9.4, width: 1.8, drop: 1.2, onlyIn: 'tower' },
+  // tipper wagons rolled along their sidings, clear of the track
+  { type: 'saltpan_wagon', pos: [21.5, 0, -8.7], variant: 0, onlyIn: 'tower' },
+  { type: 'saltpan_wagon', pos: [20.5, 0, -4.4], variant: 0, onlyIn: 'tower' },
+  { type: 'saltpan_wagon', pos: [7.6, 0, -17.7], variant: 0, onlyIn: 'tower' },
+  // the sluice-dyke sluice (and its gull) moved west along the dyke, off the track
+  { type: 'saltpan_sluice', pos: [2.0, 0, -19.0], walls: [[-1.0, 0.6], [2.0, 0.9]], open: 0.5, onlyIn: 'tower' },
+  { type: 'saltpan_gull', pos: [2.3, 1.73, -19.0], rotY: 2.6, variant: 1, onlyIn: 'tower' },
+  // the front dyke's end lamps, the pan boards, a barrow and a rake moved off the track
+  { type: 'saltpan_lamp', pos: [11.5, 0, -10.7], rotY: P - 0.4, onlyIn: 'tower' },
+  { type: 'saltpan_lamp', pos: [-14.8, 0, -7.3], rotY: 0.5, onlyIn: 'tower' },
+  { type: 'saltpan_sign', pos: [-0.3, 0, -17.35], rotY: P, text: 'PAN 3', h: 0.26, mirror: false, onlyIn: 'tower' },
+  { type: 'saltpan_sign', pos: [0.3, 0, 17.35], rotY: 0, text: 'PAN 6', h: 0.26, mirror: false, onlyIn: 'tower' },
+  { type: 'saltpan_sign', pos: [-15.6, 0, -8.4], rotY: P + 0.4, text: 'GREAT PAN', h: 0.24, mirror: false, onlyIn: 'tower' },
+  { type: 'saltpan_sign', pos: [15.6, 0, 8.4], rotY: 0.4, text: 'GREAT PAN', h: 0.24, mirror: false, onlyIn: 'tower' },
+  { type: 'saltpan_barrow', pos: [-17.2, 0, -9.6], rotY: 1.9, variant: 0, onlyIn: 'tower' },
+  { type: 'saltpan_tools', pos: [5.2, 0, -19.6], rotY: 0.05, variant: 2, onlyIn: 'tower' },
 ];

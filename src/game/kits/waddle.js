@@ -8,13 +8,17 @@
 // It lays no ink while walking and pays no mind to enemy ink. It patters and beeps the whole time it tracks (a
 // positional loop), so its foe hears it coming, and the path it takes gives away where they're hiding. Enemy fire or
 // an enemy blast pops it harmlessly (`hp`).
+// [sub-tweaks] Reaching its foe (or giving up) it doesn't burst at once: it stops and winds up for `delay` s — rocks,
+// swells, its lamp strobing, its blast radius on the floor with a beep pulse quickening (the Splat Bomb's danger ring), its
+// own alarm (cues.js SUB_CUE.waddle.warn) — so a foe who reacts can get
+// clear; the blast then hits whoever is still in it. (Still shoot-able while it winds up.)
 //
 // Events: 'sub:use' { actor, kind }, 'sub:land' { kind, pos, team, radius }, 'sub:lock' { kind, pos, team, actor, target },
-// 'bomb:explode' { actor, pos, team, radius, kind }, 'sub:destroyed' { kind, pos, team }.
+// 'sub:arm' { kind, pos, team, radius } (its windup), 'bomb:explode' { actor, pos, team, radius, kind }, 'sub:destroyed' { kind, pos, team }.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, emit, clamp, lerp, angleDiff } from '../../core/ctx.js';
-import { PLAYER, SUBS } from '../../config.js';
+import { PLAYER, SUBS, subViewScale } from '../../config.js';
 import { SUB_KITS, netRec, netId, netHurt, netMuted, ghostMute } from './registry.js';
 import { registerSubModel, GEO_KIT } from '../character-weapons.js';
 import { superEllipsoid, lathe, smoothProfile, sweep } from '../character-geo.js';
@@ -31,8 +35,9 @@ const _v = new V3(), _v2 = new V3(), _v3 = new V3(), _goal = new V3(), _c = new 
 const _hit = new Hit(), _hit2 = new Hit();
 const _res = { t: 0, dist: 0 };
 const GRAV = 24;
-const WSCALE = 1.8;               // hand-scale model → world (≈0.4 m tall with its antenna)
-const MID = 0.11 * WSCALE;        // world height of the body's middle (it tumbles about it in flight)
+const WSCALE = 1.8;               // hand-scale model → world (≈0.4 m tall with its antenna) — [sub-view] drawn × it.vs
+const MID = 0.11 * WSCALE;        // world height of the body's middle (it tumbles about it in flight); the bots' aim point
+                                  // (threatOf aimY) and the shot hitbox keep this built size: the drawn middle is MID × vs
 const r2 = (x) => Math.round(x * 100) / 100;
 const STRIDE = 5.5;               // stride cycles per second at full walking speed (two steps each)
 
@@ -104,10 +109,11 @@ function worldGeo() {
   return WG;
 }
 // outer (at the feet, yaw = heading) → rock (waddle roll about the feet) → tilt (tumble about the middle) → model
-function makeMesh(team) {
+// ([sub-view] vs: SUB_VIEW_SCALE.waddle — the model and its middle drawn that much bigger, feet still on the floor)
+function makeMesh(team, vs = 1) {
   const g = worldGeo(), col = G.teamColors[team];
   const outer = new THREE.Group(), rock = new THREE.Group(), tilt = new THREE.Group(), model = new THREE.Group();
-  tilt.position.y = MID; model.position.y = -MID; model.scale.setScalar(WSCALE);
+  tilt.position.y = MID * vs; model.position.y = -MID * vs; model.scale.setScalar(WSCALE * vs);
   const body = new THREE.Mesh(g.body, getPlasticMaterial()); body.castShadow = true;
   const ink = new THREE.Mesh(g.ink, getInkMaterial(col)); ink.castShadow = true;
   const legs = g.legs.map((geo, i) => { const pv = new THREE.Group(); pv.position.copy(HIP[i]); const m = new THREE.Mesh(geo, getPlasticMaterial()); m.castShadow = true; pv.add(m); model.add(pv); return pv; });
@@ -267,22 +273,23 @@ function use(subs, a, sub) {
   const vel = G.projectiles.throwVelocity(a, sub.throwSpeed, new V3());
   const it = spawn(a, sub, pos, vel, false, netId(a));
   netRec(a, 'waddle', [0, it.gid, r2(pos.x), r2(pos.y), r2(pos.z), r2(vel.x), r2(vel.y), r2(vel.z)]);
-  if (a.isLocal || a._nearCamera()) G.audio?.play('bomb_throw', { pos: a.isLocal ? undefined : a.pos, volume: 0.6, pitch: 1.08 });
+  G.cues?.sub('waddle', 'throw', { owner: a, at: a.pos });   // sfx-cues: its own throw (src/audio/cues.js)
   emit('sub:use', { actor: a, kind: 'waddle' });
 }
 // Online, a remote player's Waddle is a ghost: it flies and lands the same, but it never picks a foe, walks or goes
 // off by itself — its owner's records drive it: [3, gid, foe nid, x, y, z] a lock, [4, gid, x, y, z, heading, foe nid]
-// its walk (10 a second), [1, gid, x, y, z] the blast, [2, gid, popped] an end without one. Hits on a ghost go to the
-// owner (netHurt).
+// its walk (10 a second), [5, gid, x, y, z] its windup, [1, gid, x, y, z] the blast, [2, gid, popped] an end without
+// one. Hits on a ghost go to the owner (netHurt).
 function spawn(a, sub, pos, vel, ghost, gid) {
-  const m = makeMesh(a.team);
-  m.outer.position.copy(pos).setY(pos.y - MID);
+  const vs = subViewScale('waddle');   // [sub-view]
+  const m = makeMesh(a.team, vs);
+  m.outer.position.copy(pos).setY(pos.y - MID * vs);
   m.outer.rotation.y = a.aimYaw;
   G.scene.add(m.outer);
   const it = { owner: a, team: a.team, sub, m, pos, vel, state: 'fly', t: 0, age: 0, hp: sub.hp, sp: !!a.specialActive,
     heading: a.aimYaw, target: null, path: null, pi: 0, repath: 0, travel: 0, walkT: 0, lostT: 0, air: false, hop: null, phase: 0,
     prog: { t: 0, x: 0, z: 0 }, ring: null, ringT: 0, loop: null, noisy: false, blink: 0, spin: new V3(2 + Math.random() * 3, 0, 2 + Math.random() * 3),
-    ghost, gid, net: null, sendT: 0 };
+    ghost, gid, net: null, sendT: 0, vs };
   items.push(it);
   return it;
 }
@@ -293,7 +300,7 @@ function ghost(a, d) {
   if (op === 0) {
     if (items.some((x) => x.gid === gid)) return;
     spawn(a, SUBS.waddle, new V3(d[2], d[3], d[4]), new V3(d[5], d[6], d[7]), true, gid);
-    if (a._nearCamera()) G.audio?.play('bomb_throw', { pos: a.pos, volume: 0.6, pitch: 1.08 });
+    G.cues?.sub('waddle', 'throw', { owner: a, at: a.pos });   // sfx-cues
     return;
   }
   const it = items.find((x) => x.ghost && x.gid === gid && x.state !== 'dead');
@@ -305,7 +312,8 @@ function ghost(a, d) {
     if (it.state === 'sense') lock(it, byNid(d[6]));
     it.net = { x, y, z, h: d[5] };
     const T = byNid(d[6]); if (T) it.target = T;
-  } else if (op === 1) { it.pos.set(d[2], d[3], d[4]); it.why = 'net'; blast(it); }
+  } else if (op === 5) { if (it.state !== 'prime') { it.pos.set(d[2], d[3], d[4]); prime(it, 'net'); } }
+  else if (op === 1) { it.pos.set(d[2], d[3], d[4]); it.why = 'net'; blast(it); }
   else if (op === 2) { if (d[2]) pop(it); else it.state = 'dead'; }
 }
 
@@ -338,7 +346,7 @@ function fly(it, dt) {
     it.vel.addScaledVector(n, -vn * 1.45).multiplyScalar(0.55);
   }
   if (it.pos.y < PLAYER.waterY - 1.8) { it.why = 'sea'; plop(it); return; }
-  it.m.outer.position.copy(it.pos).setY(it.pos.y - MID);
+  it.m.outer.position.copy(it.pos).setY(it.pos.y - MID * it.vs);   // (the drawn middle on the flight path)
   it.m.tilt.rotation.x += it.spin.x * dt; it.m.tilt.rotation.z += it.spin.z * dt;
 }
 function plop(it) {
@@ -358,7 +366,7 @@ function land(it, h) {
   it.ring.scale.setScalar(s.senseRadius);
   G.scene.add(it.ring);
   if (near(it.pos, 40)) {
-    G.audio?.play('waddle_land', { pos: it.pos, volume: 0.8 });
+    G.cues?.one('waddle_land', { at: it.pos, owner: it.owner, team: it.team, kind: 'land', sub: true, vol: 0.8 });   // sfx-cues: through the cue mix
     G.fx?.ring?.(it.pos, h.normal, col, { radius: 0.55, life: 0.3 });
   }
   emit('sub:land', { kind: 'waddle', pos: it.pos.clone(), team: it.team, radius: s.senseRadius });
@@ -374,7 +382,7 @@ function sense(it, dt) {
   M_.outer.rotation.y = it.heading + Math.sin(it.t * 5) * 0.55 * (1 - k * 0.5);
   M_.rock.rotation.z = k > 0.6 ? (Math.random() * 2 - 1) * 0.06 * k : 0;
   blinkLamp(it, dt, lerp(0.45, 0.1, k), 2.5 + 3 * k);
-  if (it.blinked && near(it.pos, 30)) G.audio?.play('bomb_beep', { pos: it.pos, volume: 0.3 + 0.35 * k, pitch: 1.05 + 0.3 * k });
+  if (it.blinked) G.cues?.sub('waddle', 'beep', { owner: it.owner, team: it.team, at: it.pos, vol: 0.45 + 0.5 * k, pitch: 1 + 0.25 * k });   // sfx-cues: its own sensing bip
   if (it.t >= s.fuse && !it.ghost) { it.why = 'fuse'; blast(it); }
 }
 function lock(it, tgt) {
@@ -382,8 +390,8 @@ function lock(it, tgt) {
   it.target = tgt; it.state = 'wake'; it.t = 0; it.ringT = 0; it.repath = 0;
   it.heading = it.m.outer.rotation.y;
   if (near(it.pos, 40)) {
-    G.audio?.play('waddle_lock', { pos: it.pos });
-    G.fx?.glint?.(_v.copy(it.pos).setY(it.pos.y + 0.55), G.teamColors[it.team], 0.3);
+    if (!G.cues?.allySub(it.owner, it.team)) G.audio?.play('waddle_lock', { pos: it.pos });   // (a teammate's: no arming sound — cues.js MIX allySub)
+    G.fx?.glint?.(_v.copy(it.pos).setY(it.pos.y + 0.55 * it.vs), G.teamColors[it.team], 0.3);   // (over the drawn head)
   }
   emit('sub:lock', { kind: 'waddle', pos: it.pos.clone(), team: it.team, actor: it.owner, target: tgt });
 }
@@ -393,7 +401,7 @@ function wake(it, dt) {
   if (alive(T)) it.heading += clamp(angleDiff(it.heading, Math.atan2(T.pos.x - it.pos.x, T.pos.z - it.pos.z)), -14 * dt, 14 * dt);
   else if (it.net) it.heading += clamp(angleDiff(it.heading, it.net.h), -14 * dt, 14 * dt);
   const u = clamp(it.t / 0.32, 0, 1);
-  M_.outer.position.copy(it.pos); M_.outer.position.y += Math.sin(u * Math.PI) * 0.16;
+  M_.outer.position.copy(it.pos); M_.outer.position.y += Math.sin(u * Math.PI) * 0.16 * it.vs;
   M_.outer.rotation.y = it.heading;
   M_.lampMat.emissiveIntensity = 4;
   it.noisy = true;
@@ -432,7 +440,7 @@ function walk(it, dt) {
   if (!alive(it.target)) {
     const nt = scan(it, s.senseRadius);
     if (nt) { it.target = nt; it.repath = 0; it.lostT = 0; }
-    else if ((it.lostT += dt) > 0.5) { it.why = 'lost'; return blast(it); }
+    else if ((it.lostT += dt) > 0.5) return prime(it, 'lost');
   }
   const T = alive(it.target) ? it.target : null;
   // reached a foe (any foe) → boom
@@ -440,9 +448,9 @@ function walk(it, dt) {
   for (const e of G.actors) {
     if (e.team === it.team || !e.alive) continue;
     _v.copy(e.pos); _v.y += e.form === 'squid' ? 0.25 : 0.7;
-    if (_v.distanceTo(_c) < s.triggerDist) { it.why = 'reached'; return blast(it); }
+    if (_v.distanceTo(_c) < s.triggerDist) return prime(it, 'reached');
   }
-  if (it.walkT > s.life || it.travel > s.maxTravel) { it.why = it.travel > s.maxTravel ? 'travel' : 'life'; return blast(it); }
+  if (it.walkT > s.life || it.travel > s.maxTravel) return prime(it, it.travel > s.maxTravel ? 'travel' : 'life');
   let moved = 0;
   if (it.hop) moved = hopStep(it, dt);
   else if (it.air) moved = fallStep(it, dt);
@@ -461,7 +469,7 @@ function walk(it, dt) {
   it.prog.t += dt;
   if (it.prog.t > 1.4) {
     const pd = Math.hypot(it.pos.x - it.prog.x, it.pos.z - it.prog.z);
-    if (pd < 0.4 && !it.hop && !it.air) { it.why = 'stuck'; return blast(it); }
+    if (pd < 0.4 && !it.hop && !it.air) return prime(it, 'stuck');
     it.prog.t = 0; it.prog.x = it.pos.x; it.prog.z = it.pos.z;
   }
   if ((it.sendT -= dt) <= 0) {   // online: where it is, for the ghosts on other screens
@@ -492,7 +500,7 @@ function look(it, dt, moved, T) {
   M_.legs[0].rotation.x = 0.6 * sw * k; M_.legs[1].rotation.x = -0.6 * sw * k;
   M_.legs[0].position.y = HIP[0].y + Math.max(0, -sw) * 0.009 * k; M_.legs[1].position.y = HIP[1].y + Math.max(0, sw) * 0.009 * k;
   M_.rock.rotation.set(-0.1 * k, 0, 0.17 * sw * k);
-  M_.model.position.y = -MID + Math.abs(sw) * 0.012 * k;
+  M_.model.position.y = (-MID + Math.abs(sw) * 0.012 * k) * it.vs;
   if (!it.hop && !it.air) M_.outer.position.copy(it.pos);
   M_.outer.rotation.y = it.heading + 0.1 * sw * k;
   const close = T ? clamp(1 - Math.hypot(T.pos.x - it.pos.x, T.pos.z - it.pos.z) / s.senseRadius, 0, 1) : 0;
@@ -556,6 +564,42 @@ function hopStep(it, dt) {
   return Math.hypot(it.pos.x - x0, it.pos.z - z0);
 }
 
+// ---- the windup: it stops where it is (feet on the floor), rocks and swells, the lamp strobing, its blast radius shown
+// on the floor with a beep pulse quickening, then bursts (s.delay later). A ghost waits for its owner's blast record.
+function prime(it, why) {
+  const s = it.sub;
+  if (!it.ghost) netRec(it.owner, 'waddle', [5, it.gid, r2(it.pos.x), r2(it.pos.y), r2(it.pos.z)]);
+  it.why = why; it.state = 'prime'; it.t = 0; it.fuse = s.delay; it.hop = null; it.air = false; it.flashT = 0;
+  it.m.outer.position.copy(it.pos);
+  hush(it);
+  G.cues?.sub('waddle', 'warn', { owner: it.owner, team: it.team, at: it.pos, target: alive(it.target) ? it.target : null, radius: s.radius });   // sfx-cues: its windup alarm
+  if (near(it.pos, 45)) G.fx?.glint?.(_v.copy(it.pos).setY(it.pos.y + 0.55 * it.vs), G.teamColors[it.team], 0.35);
+  emit('sub:arm', { kind: 'waddle', pos: it.pos.clone(), team: it.team, radius: s.radius });
+}
+function primed(it, dt) {
+  const s = it.sub, M_ = it.m;
+  it.fuse -= dt;
+  const k = clamp(1 - it.fuse / s.delay, 0, 1);
+  M_.outer.position.copy(it.pos);
+  M_.rock.rotation.set(-0.12 * k, 0, Math.sin(it.t * 38) * (0.08 + 0.1 * k));        // rocking, faster and wider
+  M_.model.scale.setScalar(WSCALE * it.vs * (1 + 0.3 * k + 0.04 * k * Math.sin(it.t * 70)));
+  M_.model.position.y = -MID * it.vs;                                                  // (swells about its feet: they stay down)
+  for (const L of M_.legs) L.rotation.x *= 0.8;
+  M_.lampMat.emissiveIntensity = (Math.floor(it.t * (10 + 16 * k)) % 2) ? 6 : 0.4;
+  // the tell, in the Splat Bomb's language (fx.js): its blast radius as a danger ring, a beep pulse quickening 7 → 20 a second
+  it.flashT += dt * (7 + 13 * k);
+  const blink = it.flashT >= 1;
+  if (blink) { it.flashT -= 1; it.blinks = (it.blinks || 0) + 1; }
+  if (G.fx && near(it.pos, 55)) {
+    const col = G.teamColors[it.team];
+    G.fx.dangerRing?.(_v.copy(it.pos).setY(it.pos.y + 0.02), UP, col, s.radius, k);
+    if (blink) G.fx.beepPulse?.(_v2.copy(it.pos).setY(it.pos.y + MID * it.vs * (1 + 0.3 * k)), it.pos, UP, col, s.radius, k);
+  }
+  if (it.fuse > 1e-4) return;   // (to the frame: 0.45 s is 27 of them)
+  if (it.ghost) { if (it.fuse < -2) it.state = 'dead'; return; }
+  blast(it);
+}
+
 function blinkLamp(it, dt, period, bright) {
   it.blink -= dt; it.blinked = false;
   if (it.blink <= 0) { it.blink = period; it.blinked = true; }
@@ -563,10 +607,7 @@ function blinkLamp(it, dt, period, bright) {
 }
 function noise(it, pitch) {
   it.noisy = true;
-  if (near(it.pos, 42) && G.audio) {
-    if (!it.loop) it.loop = G.audio.loop('waddle_walk', { pos: it.pos, volume: 0.9, pitch });
-    it.loop.set({ pos: it.pos, pitch });
-  } else if (it.loop) { it.loop.stop(0.15); it.loop = null; }
+  it.noisePitch = pitch;   // sfx-cues: the walk loop (and the hunt alarm on its target) come from src/audio/cues.js
 }
 function hush(it) { it.noisy = false; if (it.loop) { it.loop.stop(0.1); it.loop = null; } }
 
@@ -583,7 +624,7 @@ function blast(it) {
   }
   credit(it, area);
   G.fx?.explosion(c, col, s.radius);
-  G.audio?.play('bomb_explode', { pos: c });
+  G.cues?.sub('waddle', 'boom', { owner: a, team, at: c });   // sfx-cues: its own boing-boom
   emit('shake', { pos: c.clone(), amount: 0.6 });
   emit('bomb:explode', { actor: a, pos: c.clone(), team, radius: s.radius, kind: 'waddle' });
   const loc = G.local;
@@ -615,7 +656,7 @@ function pop(it) {
   _c.copy(it.pos); _c.y += 0.22;
   if (near(_c, 40)) {
     G.fx?.burst?.(_c, UP, G.teamColors[it.team], { count: 12, speed: 3.5, size: 0.07 });
-    G.audio?.play('splat_small', { pos: _c, volume: 0.8, pitch: 1.3 });
+    G.cues?.sub('waddle', 'end', { owner: it.owner, team: it.team, at: _c.clone() });   // sfx-cues: a squeaky deflate
   }
   emit('sub:destroyed', { kind: 'waddle', pos: _c.clone(), team: it.team });
   it.why = 'popped'; it.state = 'dead';
@@ -672,6 +713,9 @@ function threatOf(it) {
     get hp() { return it.hp; },
     get shootable() { return it.state !== 'fly' && it.state !== 'dead'; },
     get locked() { return it.state === 'wake' || it.state === 'walk'; },
+    // winding up to burst where it stands (s until it does): botSpecials.js makes it a danger area to get out of
+    get priming() { return it.state === 'prime'; },
+    get fuse() { return it.state === 'prime' ? Math.max(0, it.fuse) : Infinity; },
     get target() { return (it.state === 'wake' || it.state === 'walk') && alive(it.target) ? it.target : null; },
     // walking: its heading at full speed (it lays no velocity of its own); in the air / falling: its velocity
     get vel() {
@@ -700,6 +744,7 @@ SUB_KITS.waddle = {
           case 'sense': sense(it, dt); break;
           case 'wake': wake(it, dt); break;
           case 'walk': walk(it, dt); break;
+          case 'prime': primed(it, dt); break;
         }
       });
       if (it.ghost && it.age > 40) it.state = 'dead';   // (its owner left)
@@ -753,13 +798,14 @@ SUB_KITS.waddle = {
       if (go) brain.bombCd = 6 + Math.random() * 5;
       return go;
     },
-    // scouting: a foe we can't see is lurking near where the throw would land — send it to flush them out
+    // scouting: a foe we saw go out of sight (bots.js / botSight.js memory, a few seconds old at most) near where the
+    // throw would land — send it to flush them out
     paint(brain) {
-      if (Math.random() > 0.03) return false;
+      if (Math.random() > 0.03 || !brain.sight) return false;
       const a = brain.a, lx = a.pos.x + Math.sin(a.aimYaw) * 7.5, lz = a.pos.z + Math.cos(a.aimYaw) * 7.5;
-      for (const e of G.actors) {
-        if (e.team === a.team || !e.alive || brain.target === e) continue;
-        if (Math.hypot(e.pos.x - lx, e.pos.z - lz) < 6.5 && Math.abs(e.pos.y - a.pos.y) < 3) { brain.bombCd = 9 + Math.random() * 6; return true; }
+      for (const [e, k] of brain.sight.mem) {
+        if (k.seen || brain.target === e || G.time - k.t > 4) continue;
+        if (Math.hypot(k.pos.x - lx, k.pos.z - lz) < 6.5 && Math.abs(k.pos.y - a.pos.y) < 3) { brain.bombCd = 9 + Math.random() * 6; return true; }
       }
       return false;
     },
